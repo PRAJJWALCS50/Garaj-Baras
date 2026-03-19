@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+requests
+Pillow
+opencv-python
+numpy
+scikit-fuzzy
+scipy
+python-dotenv
+httpx
