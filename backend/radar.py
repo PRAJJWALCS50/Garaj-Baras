@@ -247,74 +247,88 @@ def extract_timestamp_from_gif():
     X: 614-820, Y: 230-310
     In full 880x720 frame (BEFORE cropping)
     """
-    import pytesseract
+    try:
+        import pytesseract
+    except ImportError:
+        # Render Linux won't have pytesseract installed (or it may be missing).
+        print("pytesseract not available - using fallback")
+        return None
+
     import re
     from datetime import datetime, timezone, timedelta
     from PIL import ImageEnhance
 
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
     IST = timezone(timedelta(hours=5, minutes=30))
 
-    # Load GIF and get LAST frame (most recent)
-    gif = Image.open(GIF_SAVE_PATH)
-    frames = list(ImageSequence.Iterator(gif))
-    last_frame = frames[-1].convert('RGB')
+    try:
+        # On Windows we can point to the bundled/installed tesseract binary.
+        # On Render Linux there is no binary; in that case the OCR call will fail,
+        # and we must fall back safely.
+        if os.name == "nt":
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-    # Direct crop - no guessing
-    ts_crop = last_frame.crop((614, 230, 820, 310))
+        # Load GIF and get LAST frame (most recent)
+        gif = Image.open(GIF_SAVE_PATH)
+        frames = list(ImageSequence.Iterator(gif))
+        last_frame = frames[-1].convert('RGB')
 
-    # Scale up 3x for better OCR accuracy
-    w, h = ts_crop.size
-    ts_large = ts_crop.resize((w * 3, h * 3), Image.LANCZOS)
-    ts_gray = ts_large.convert('L')
-    enhancer = ImageEnhance.Contrast(ts_gray)
-    ts_ready = enhancer.enhance(2.0)
+        # Direct crop - no guessing
+        ts_crop = last_frame.crop((614, 230, 820, 310))
 
-    # Read text
-    text = pytesseract.image_to_string(
-        ts_ready,
-        config='--psm 6'
-    ).strip()
+        # Scale up 3x for better OCR accuracy
+        w, h = ts_crop.size
+        ts_large = ts_crop.resize((w * 3, h * 3), Image.LANCZOS)
+        ts_gray = ts_large.convert('L')
+        enhancer = ImageEnhance.Contrast(ts_gray)
+        ts_ready = enhancer.enhance(2.0)
 
-    print(f"OCR raw text: {repr(text)}")
+        # Read text
+        text = pytesseract.image_to_string(
+            ts_ready,
+            config='--psm 6'
+        ).strip()
 
-    # Parse UTC time pattern: HH:MM:SSZ
-    utc_match = re.search(
-        r'(\d{1,2}):(\d{2}):(\d{2})\s*Z',
-        text,
-        flags=re.IGNORECASE
-    )
+        print(f"OCR raw text: {repr(text)}")
 
-    if utc_match:
-        h, m, s = map(int, utc_match.groups())
-        today = datetime.now(timezone.utc).date()
-        dt_utc = datetime(
-            today.year, today.month, today.day,
-            h, m, s, tzinfo=timezone.utc
+        # Parse UTC time pattern: HH:MM:SSZ
+        utc_match = re.search(
+            r'(\d{1,2}):(\d{2}):(\d{2})\s*Z',
+            text,
+            flags=re.IGNORECASE
         )
-        dt_ist = dt_utc.astimezone(IST)
-        print(f"Timestamp extracted: {dt_ist.strftime('%H:%M:%S IST')}")
-        return dt_ist
 
-    # Some OCR outputs miss the trailing 'Z' but still contain the HH:MM:SS
-    # time (often the IST line, e.g. "... 18:02:27 Is").
-    ist_match = re.search(
-        r'(\d{1,2}):(\d{2}):(\d{2})',
-        text
-    )
-    if ist_match:
-        h, m, s = map(int, ist_match.groups())
-        today = datetime.now(IST).date()
-        dt_ist = datetime(
-            today.year, today.month, today.day,
-            h, m, s, tzinfo=IST
+        if utc_match:
+            h, m, s = map(int, utc_match.groups())
+            today = datetime.now(timezone.utc).date()
+            dt_utc = datetime(
+                today.year, today.month, today.day,
+                h, m, s, tzinfo=timezone.utc
+            )
+            dt_ist = dt_utc.astimezone(IST)
+            print(f"Timestamp extracted: {dt_ist.strftime('%H:%M:%S IST')}")
+            return dt_ist
+
+        # Some OCR outputs miss the trailing 'Z' but still contain the HH:MM:SS
+        # time (often the IST line, e.g. "... 18:02:27 Is").
+        ist_match = re.search(
+            r'(\d{1,2}):(\d{2}):(\d{2})',
+            text
         )
-        print(f"Timestamp extracted: {dt_ist.strftime('%H:%M:%S IST')}")
-        return dt_ist
+        if ist_match:
+            h, m, s = map(int, ist_match.groups())
+            today = datetime.now(IST).date()
+            dt_ist = datetime(
+                today.year, today.month, today.day,
+                h, m, s, tzinfo=IST
+            )
+            print(f"Timestamp extracted: {dt_ist.strftime('%H:%M:%S IST')}")
+            return dt_ist
 
-    print("OCR failed - using 25 min fallback")
-    return None
+        print("OCR failed - using 25 min fallback")
+        return None
+    except Exception as e:
+        print(f"OCR failed: {e} - using fallback")
+        return None
 
 
 def get_radar_lag_mins(latest_timestamp=None):

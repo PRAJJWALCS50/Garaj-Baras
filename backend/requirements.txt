@@ -8,3 +8,4 @@ scikit-fuzzy
 scipy
 python-dotenv
 httpx
+pytesseract
