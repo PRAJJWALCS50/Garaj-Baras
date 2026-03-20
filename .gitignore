@@ -1,8 +1,32 @@
-backend/frames/
-backend/venv/
-backend/delhi_radar.gif
-*.gif
+# Python
 __pycache__/
+*.py[cod]
 *.pyc
+*.pyo
+
+# Virtual environment
+venv/
+env/
+
+# Radar data files
+*.gif
 *.png
+backend/frames/
+backend/delhi_radar.gif
+
+# Debug files
 backend/debug_*.png
+
+# Large binaries
+*.exe
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
