@@ -227,13 +227,14 @@ if __name__ == "__main__":
 
     # Setup - run once for both routes
     print("Setting up radar data...")
-    all_frames, _ = get_all_frames()
-    recent_frames, _ = get_recent_frames(n=6)
-    clutter_mask = build_clutter_mask(all_frames)
+    all_frame_data = get_all_frames()
+    recent_frame_data = get_recent_frames(n=6)
+    all_paths = [p for (p, _ts) in all_frame_data]
+    clutter_mask = build_clutter_mask(all_paths)
     dx, dy, dir_from, dir_to, speed = get_movement_vector(
-        recent_frames, clutter_mask=clutter_mask
+        recent_frame_data, clutter_mask=clutter_mask
     )
-    latest_frame = recent_frames[-1]
+    latest_frame = recent_frame_data[-1][0]
     print(f"Rain moving FROM {dir_from} -> TO {dir_to} at {speed:.1f} km/h")
     print()
 

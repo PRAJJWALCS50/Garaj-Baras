@@ -142,64 +142,108 @@ if __name__ == "__main__":
                             check_route_rain, 
                             haversine_km)
 
-    all_frames, _    = get_all_frames()
-    recent_frames, _ = get_recent_frames(n=6)
-    lag_info         = get_radar_lag_mins()
+    all_frame_data    = get_all_frames()
+    recent_frame_data = get_recent_frames(n=6)
+    latest_ts = recent_frame_data[-1][1] if recent_frame_data else None
+    lag_info         = get_radar_lag_mins(latest_ts)
     
-    clutter_mask = build_clutter_mask(all_frames)
+    all_paths = [p for (p, _ts) in all_frame_data]
+    clutter_mask = build_clutter_mask(all_paths)
     dx, dy, dir_from, dir_to, speed = get_movement_vector(
-        recent_frames, clutter_mask=clutter_mask
+        recent_frame_data, clutter_mask=clutter_mask
     )
-    latest_frame = recent_frames[-1]
+    latest_frame = recent_frame_data[-1][0]
 
     print(f"Lag Assumption : {lag_info['message']}")
     print(f"Rain moves     : FROM {dir_from} -> TO {dir_to} at {speed:.1f} km/h")
     print()
 
-    start = (28.6270, 77.3724)  # Sec 62 Noida
-    end   = (28.5180, 77.3900)  # Sec 128 Noida
+    # Simulate user departure at 7:00 PM IST today
+    # NOTE: keep the last-radar timestamp fixed as the frame timestamp we observed at ~7 PM.
+    from datetime import datetime, timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
+
+    start = (25.361053, 81.403168)  # Kaushambi
+    end   = (26.7606, 80.8893)      # Lucknow
+
+    # Use live current departure time (latest live departure).
+    departure_time = datetime.now(IST)
+
+    simulated_lag = (departure_time - latest_ts).total_seconds() / 60.0 if latest_ts else lag_info['lag_mins']
+    print(f"Simulated departure : {departure_time.strftime('%H:%M:%S IST')}")
+    print(f"Radar available     : {latest_ts.strftime('%H:%M:%S IST') if latest_ts else 'Unknown'}")
+    print(f"Simulated lag       : {simulated_lag:.0f} mins")
+    print()
 
     start_in = is_within_radar(start[0], start[1])
-    end_in   = is_within_radar(end[0],   end[1])
+    end_in   = is_within_radar(end[0], end[1])
     print(f"Start in radar: {start_in}")
     print(f"End   in radar: {end_in}")
     print()
 
-    waypoints_latlon = generate_waypoints(
-        start, end, spacing_km=2.0
-    )
-    total_dist = haversine_km(
-        start[0], start[1], end[0], end[1]
-    )
+    # We need the GIF as it was at 7 PM.
+    # Best we can do: use current GIF but apply 7 PM lag manually.
+    all_frame_data = get_all_frames()
+    recent_frame_data = get_recent_frames(n=6)
 
-    print(f"Distance : {total_dist:.1f} km")
-    print(f"Waypoints: {len(waypoints_latlon)}")
+    all_paths = [p for (p, _ts) in all_frame_data]
+    clutter_mask_sim = build_clutter_mask(all_paths)
+
+    dx, dy, dir_from, dir_to, speed = get_movement_vector(
+        recent_frame_data, clutter_mask=clutter_mask_sim
+    )
+    print(f"Rain moves     : FROM {dir_from} -> TO {dir_to} at {speed:.1f} km/h")
     print()
 
-    waypoints_pixels = [
-        (latlon_to_pixel(lat, lon)[0],
-         latlon_to_pixel(lat, lon)[1],
-         eta)
-        for lat, lon, eta in waypoints_latlon
-    ]
+    # Use the latest radar frame as base for shifting.
+    latest_frame = recent_frame_data[-1][0]
+    latest_ts = recent_frame_data[-1][1]
+    if latest_ts:
+        print("Using frame: %s (latest radar)" % latest_ts.strftime('%H:%M IST'))
+    else:
+        print("Using frame: latest (timestamp unknown)")
+
+    # Generate waypoints
+    waypoints_latlon = generate_waypoints(start, end, spacing_km=2.0)
+    total_dist = haversine_km(start[0], start[1], end[0], end[1])
+
+    print("Route   : Kaushambi -> Lucknow")
+    print("Distance: %.1f km" % total_dist)
+    print("Waypoints: %d" % len(waypoints_latlon))
+    print()
+
+    # Clamp waypoint pixels to the actual radar frame bounds.
+    # OCR/georef calibration may put end-points slightly outside crop bounds,
+    # which would otherwise crash prediction indexing.
+    from PIL import Image
+    img_latest = Image.open(latest_frame).convert("RGB")
+    frame_w, frame_h = img_latest.size
+
+    waypoints_pixels = []
+    for lat, lon, eta in waypoints_latlon:
+        px, py = latlon_to_pixel(lat, lon)
+        px = max(0, min(frame_w - 1, px))
+        py = max(0, min(frame_h - 1, py))
+        waypoints_pixels.append((px, py, eta))
 
     max_eta = waypoints_latlon[-1][2]
     results = check_route_rain(
         waypoints_pixels, dx, dy,
         latest_frame,
         eta_minutes=max_eta,
-        clutter_mask=clutter_mask,
-        lag_mins=lag_info['lag_mins']
+        clutter_mask=clutter_mask_sim,
+        lag_mins=simulated_lag
     )
 
+    # Pass simulated lag for message text + internal shifting context.
+    lag_info_sim = {"lag_mins": simulated_lag}
     enriched = enrich_results(
         results, waypoints_latlon,
         latest_frame, dx, dy,
-        lag_info=lag_info
+        lag_info=lag_info_sim
     )
 
-    print(f"{'WP':<5} {'ETA':>5} {'Status':<12} "
-          f"{'Intensity':<16} {'dBZ':>4}  Note")
+    print(f"{'WP':<5} {'ETA':>5} {'Status':<12} {'Intensity':<16} {'dBZ':>4}  Note")
     print("-" * 65)
 
     rain_count = 0
@@ -207,24 +251,26 @@ if __name__ == "__main__":
         in_bounds = is_within_radar(e["lat"], e["lon"])
         status = "RAIN" if e["rain_expected"] else "CLEAR"
         note = ""
+
+        effective_eta = e["eta_mins"] + simulated_lag
         if not in_bounds:
             note = "WARNING: outside radar"
-        elif e["eta_mins"] > 60:
-            note = "WARNING: long range"
+        elif effective_eta > 90:
+            note = "WARNING: beyond range"
+
         if e["rain_expected"]:
             rain_count += 1
-        
-        print(f"WP{i+1:02d}  {e['eta_mins']:>4.0f}m  "
-              f"{status:<12} {e['label']:<16} "
-              f"{e['dbz']:>4.0f}  {note}")
+
+        print(f"WP{i+1:02d}  {e['eta_mins']:>4.0f}m  {status:<12} {e['label']:<16} {e['dbz']:>4.0f}  {note}")
 
     print()
-    print(f"SUMMARY:")
-    print(f"  Total waypoints : {len(enriched)}")
-    print(f"  Rain waypoints  : {rain_count}")
-    print(f"  Clear waypoints : {len(enriched) - rain_count}")
+    print("SUMMARY:")
+    print("  Departure time  : %s" % departure_time.strftime('%H:%M:%S IST'))
+    print("  Radar lag at departure: %.0f mins" % simulated_lag)
+    print("  Total waypoints : %d" % len(enriched))
+    print("  Rain waypoints  : %d" % rain_count)
+    print("  Clear waypoints : %d" % (len(enriched) - rain_count))
     if rain_count > 0:
         first = next(e for e in enriched if e["rain_expected"])
-        print(f"  First rain at   : {first['eta_mins']:.0f} mins")
-        print(f"  First intensity : {first['label']}")
-        print(f"  Lag assumption  : {lag_info['lag_mins']} mins")
+        print("  First rain at   : ETA %.0f mins" % first["eta_mins"])
+        print("  Intensity       : %s" % first["label"])

@@ -5,7 +5,7 @@ import requests
 from PIL import Image, ImageSequence
 from datetime import datetime, timezone, timedelta
 
-GIF_URL = "https://mausam.imd.gov.in/Radar/animation/Converted/DELHI_MAXZ.gif"
+GIF_URL = "https://mausam.imd.gov.in/Radar/animation/Converted/LKN_MAXZ.gif"
 GIF_SAVE_PATH = os.path.join(os.path.dirname(__file__), "delhi_radar.gif")
 FRAMES_FOLDER = os.path.join(os.path.dirname(__file__), "frames")
 
@@ -33,52 +33,198 @@ def download_gif(url, save_path):
         return False, None
 
 
-CROP_TOP    = 144          # Remove top brown panel
-CROP_RIGHT  = 527          # Remove right info panel
-CROP_BOTTOM = CROP_TOP + 525  # = 669, gives exact 525px height
+CROP_TOP    = 126          # Remove top brown panel
+CROP_RIGHT  = 423          # Remove right info panel
+CROP_BOTTOM = 568          # Crop bottom (full image y)
 
 
 def extract_frames(gif_path, output_folder):
     """
-    Extract all frames from animated GIF to output_folder as PNGs.
-    Each frame is cropped to remove the brown top panel and right info panel,
-    yielding a clean 527x525 radar-circle image.
-    Returns list of frame file paths.
+    Extract all frames from animated GIF.
+
+    For each GIF frame:
+    - OCR the timestamp from the exact RIGHT-panel coordinates (before cropping)
+    - Crop the radar-circle region and save it as `frame_XX.png`
+
+    Returns:
+        frame_data: list of (frame_path, timestamp_or_None)
     """
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    frame_paths = []
+    frame_data = []
     try:
+        import re
+
+        # OCR init (slow first time; cached by Tesseract/pytesseract)
+        ocr_available = False
+        pytesseract = None
+        try:
+            import pytesseract as _pytesseract
+            pytesseract = _pytesseract
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            ocr_available = True
+        except Exception:
+            ocr_available = False
+
         with Image.open(gif_path) as im:
             for i, frame in enumerate(ImageSequence.Iterator(im)):
-                frame_rgb = frame.convert('RGB')
-                # Crop to radar circle only
-                frame_cropped = frame_rgb.crop((
+                full = frame.convert('RGB')
+
+                # OCR timestamp from exact location in the FULL 880x720 frame.
+                timestamp = None
+                if ocr_available and pytesseract is not None:
+                    try:
+                        from PIL import ImageEnhance
+
+                        ts_crop = full.crop((451, 130, 673, 279))
+                        w, h = ts_crop.size
+                        ts_large = ts_crop.resize((w * 3, h * 3), Image.LANCZOS)
+                        ts_gray = ts_large.convert('L')
+                        enhancer = ImageEnhance.Contrast(ts_gray)
+                        ts_ready = enhancer.enhance(2.0)
+
+                        text = pytesseract.image_to_string(
+                            ts_ready,
+                            config='--psm 6 -c tessedit_char_whitelist=0123456789:ZIST'
+                        ).strip()
+
+                        upper = text.upper()
+
+                        # Prefer UTC time if it is read with a trailing 'Z'.
+                        utc_match = re.search(
+                            r'(\d{1,2}):(\d{2}):(\d{2})\s*Z',
+                            upper
+                        )
+                        # IST line is usually read as "... HH:MM:SS IST" or "... HH:MM:SS Is"
+                        ist_match = re.search(
+                            r'(\d{1,2}):(\d{2}):(\d{2})\s*(?:IST|IS)',
+                            upper
+                        )
+
+                        def valid_hms(hh, mm, ss):
+                            return 0 <= hh < 24 and 0 <= mm < 60 and 0 <= ss < 60
+
+                        if utc_match:
+                            h_t, m_t, s_t = map(int, utc_match.groups())
+                            if valid_hms(h_t, m_t, s_t):
+                                today = datetime.now(timezone.utc).date()
+                                dt_utc = datetime(
+                                    today.year, today.month, today.day,
+                                    h_t, m_t, s_t,
+                                    tzinfo=timezone.utc
+                                )
+                                timestamp = dt_utc.astimezone(IST)
+                        elif ist_match:
+                            h_t, m_t, s_t = map(int, ist_match.groups())
+                            if valid_hms(h_t, m_t, s_t):
+                                today = datetime.now(IST).date()
+                                timestamp = datetime(
+                                    today.year, today.month, today.day,
+                                    h_t, m_t, s_t,
+                                    tzinfo=IST
+                                )
+                        else:
+                            # Fallback: parse the first HH:MM:SS token.
+                            # Decide timezone by presence of the 'UTC' word.
+                            t_match = re.search(r'(\d{1,2}):(\d{2}):(\d{2})', upper)
+                            if t_match:
+                                h_t, m_t, s_t = map(int, t_match.groups())
+                                if valid_hms(h_t, m_t, s_t):
+                                    today_utc = datetime.now(timezone.utc).date()
+                                    today_ist = datetime.now(IST).date()
+                                    if 'UTC' in upper:
+                                        dt_utc = datetime(
+                                            today_utc.year, today_utc.month, today_utc.day,
+                                            h_t, m_t, s_t,
+                                            tzinfo=timezone.utc
+                                        )
+                                        timestamp = dt_utc.astimezone(IST)
+                                    else:
+                                        timestamp = datetime(
+                                            today_ist.year, today_ist.month, today_ist.day,
+                                            h_t, m_t, s_t,
+                                            tzinfo=IST
+                                        )
+                    except Exception:
+                        timestamp = None
+
+                # Crop to radar circle only (keep calibrated 527x525 output)
+                frame_cropped = full.crop((
                     0,           # left
                     CROP_TOP,    # top  (remove brown panel)
                     CROP_RIGHT,  # right (remove info panel)
-                    CROP_BOTTOM  # bottom (trim to exact 525px height)
+                    CROP_BOTTOM  # bottom (trim)
                 ))
+
                 frame_filename = f"frame_{i:02d}.png"
                 frame_path = os.path.join(output_folder, frame_filename)
-                # Save cropped frame
                 frame_cropped.save(frame_path)
-                frame_paths.append(frame_path)
+
+                frame_data.append((frame_path, timestamp))
+
+                if i == 0:
+                    print("Lucknow crop frame size: %s" % (frame_cropped.size,))
     except Exception as e:
         print(f"Error extracting frames: {e}")
 
-    return frame_paths
+    # Post-process timestamps to make them usable for motion estimation.
+    # OCR can occasionally misread minutes/hours and create huge or zero gaps,
+    # which would otherwise cause optical-flow to skip too many frame pairs.
+    # IMD radar scans are ~10 minutes apart, so we enforce a ~10-min cadence.
+    assumed_step_mins = 10.0
+    try:
+        timestamps = [ts for (_fp, ts) in frame_data]
+        if any(ts is not None for ts in timestamps):
+            # Find last frame with a timestamp
+            last_valid = max(i for i, ts in enumerate(timestamps) if ts is not None)
+
+            # Backward fill/repair up to first frame
+            for i in range(last_valid - 1, -1, -1):
+                next_ts = timestamps[i + 1]
+                if next_ts is None:
+                    continue
+                if timestamps[i] is None:
+                    timestamps[i] = next_ts - timedelta(minutes=assumed_step_mins)
+                    continue
+                gap_mins = (next_ts - timestamps[i]).total_seconds() / 60.0
+                # Accept only reasonable gaps; otherwise enforce ~10 minutes
+                if gap_mins < 5 or gap_mins > 20:
+                    timestamps[i] = next_ts - timedelta(minutes=assumed_step_mins)
+
+            # Forward fill/repair after last_valid
+            for i in range(last_valid + 1, len(timestamps)):
+                prev_ts = timestamps[i - 1]
+                if prev_ts is None:
+                    continue
+                if timestamps[i] is None:
+                    timestamps[i] = prev_ts + timedelta(minutes=assumed_step_mins)
+                    continue
+                gap_mins = (timestamps[i] - prev_ts).total_seconds() / 60.0
+                if gap_mins < 5 or gap_mins > 20:
+                    timestamps[i] = prev_ts + timedelta(minutes=assumed_step_mins)
+
+            # Write repaired timestamps back
+            frame_data = [(fp, timestamps[i]) for i, (fp, _ts) in enumerate(frame_data)]
+    except Exception:
+        # If repair fails, keep original OCR timestamps.
+        pass
+
+    for i, (_fp, ts) in enumerate(frame_data):
+        ts_str = ts.strftime('%H:%M:%S') if ts else 'Unknown'
+        print(f"Frame {i:02d}: {ts_str}")
+
+    return frame_data
 
 
 def get_latest_frames():
-    """Download fresh GIF and extract all frames. Returns (frames, None)."""
+    """Download fresh GIF and extract all frames with timestamps."""
     success, _ = download_gif(GIF_URL, GIF_SAVE_PATH)
     if success:
-        return extract_frames(GIF_SAVE_PATH, FRAMES_FOLDER), None
+        return extract_frames(GIF_SAVE_PATH, FRAMES_FOLDER)
     else:
         print("Failed to download radar GIF.")
-        return [], None
+        return []
 
 
 def get_all_frames():
@@ -87,45 +233,153 @@ def get_all_frames():
 
 
 def get_recent_frames(n=6):
-    """Download fresh GIF and return only the LAST n frames + None."""
-    frames, _ = get_latest_frames()
-    if len(frames) <= n:
-        return frames, None
-    return frames[-n:], None
+    """Download fresh GIF and return only the LAST n frames with timestamps."""
+    frame_data = get_all_frames()
+    if len(frame_data) <= n:
+        return frame_data
+    return frame_data[-n:]
 
 
-def get_radar_lag_mins():
+def extract_timestamp_from_gif():
     """
-    IMD radar reality:
-    - Radar scans every 10 mins
-    - IMD uploads with delay
-    - GIF animation updates irregularly
-    - We cannot reliably extract exact scan time
-    
-    Conservative safe assumption: 25 mins lag
-    This is honest and safe for predictions.
+    Extracts timestamp directly from radar GIF.
+    Timestamp is at exact location:
+    X: 614-820, Y: 230-310
+    In full 880x720 frame (BEFORE cropping)
     """
+    import pytesseract
+    import re
+    from datetime import datetime, timezone, timedelta
+    from PIL import ImageEnhance
+
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+    IST = timezone(timedelta(hours=5, minutes=30))
+
+    # Load GIF and get LAST frame (most recent)
+    gif = Image.open(GIF_SAVE_PATH)
+    frames = list(ImageSequence.Iterator(gif))
+    last_frame = frames[-1].convert('RGB')
+
+    # Direct crop - no guessing
+    ts_crop = last_frame.crop((614, 230, 820, 310))
+
+    # Scale up 3x for better OCR accuracy
+    w, h = ts_crop.size
+    ts_large = ts_crop.resize((w * 3, h * 3), Image.LANCZOS)
+    ts_gray = ts_large.convert('L')
+    enhancer = ImageEnhance.Contrast(ts_gray)
+    ts_ready = enhancer.enhance(2.0)
+
+    # Read text
+    text = pytesseract.image_to_string(
+        ts_ready,
+        config='--psm 6'
+    ).strip()
+
+    print(f"OCR raw text: {repr(text)}")
+
+    # Parse UTC time pattern: HH:MM:SSZ
+    utc_match = re.search(
+        r'(\d{1,2}):(\d{2}):(\d{2})\s*Z',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    if utc_match:
+        h, m, s = map(int, utc_match.groups())
+        today = datetime.now(timezone.utc).date()
+        dt_utc = datetime(
+            today.year, today.month, today.day,
+            h, m, s, tzinfo=timezone.utc
+        )
+        dt_ist = dt_utc.astimezone(IST)
+        print(f"Timestamp extracted: {dt_ist.strftime('%H:%M:%S IST')}")
+        return dt_ist
+
+    # Some OCR outputs miss the trailing 'Z' but still contain the HH:MM:SS
+    # time (often the IST line, e.g. "... 18:02:27 Is").
+    ist_match = re.search(
+        r'(\d{1,2}):(\d{2}):(\d{2})',
+        text
+    )
+    if ist_match:
+        h, m, s = map(int, ist_match.groups())
+        today = datetime.now(IST).date()
+        dt_ist = datetime(
+            today.year, today.month, today.day,
+            h, m, s, tzinfo=IST
+        )
+        print(f"Timestamp extracted: {dt_ist.strftime('%H:%M:%S IST')}")
+        return dt_ist
+
+    print("OCR failed - using 25 min fallback")
+    return None
+
+
+def get_radar_lag_mins(latest_timestamp=None):
+    """
+    Computes radar lag (minutes old) using the OCR-extracted timestamp.
+
+    If `latest_timestamp` is not provided or is invalid, falls back to a conservative 25 min.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    IST = timezone(timedelta(hours=5, minutes=30))
+
+    radar_time = latest_timestamp
+    if radar_time is None:
+        # Fallback: OCR just the last frame
+        radar_time = extract_timestamp_from_gif()
+
+    if radar_time:
+        now = datetime.now(IST)
+        lag = (now - radar_time).total_seconds() / 60.0
+
+        # Sanity check - lag should be 0-180 mins
+        if 0 <= lag <= 180:
+            if lag < 30:
+                freshness = "fresh"
+            elif lag < 60:
+                freshness = "stale"
+            else:
+                freshness = "very_stale"
+
+            return {
+                "lag_mins": round(lag, 1),
+                "freshness": freshness,
+                "method": "ocr_timestamp",
+                "message": f"Radar data is {lag:.0f} mins old",
+                "radar_time": radar_time.strftime('%H:%M IST')
+            }
+
+    # Fallback if OCR fails
     return {
         "lag_mins": 25.0,
         "freshness": "stale",
-        "message": "Radar data assumed ~25 mins old (conservative estimate)",
-        "warning": "Exact scan time unavailable. Using safe 25 min estimate."
+        "method": "fallback_estimate",
+        "message": "Radar ~25 mins old (estimate)",
+        "radar_time": "Unknown"
     }
 
 
 if __name__ == "__main__":
     print("=" * 45)
-    print("RADAR LAG AWARENESS (FIXED)")
+    print("RADAR LAG AWARENESS (OCR TIMESTAMP)")
     print("=" * 45)
     
-    frames, _ = get_recent_frames(n=6)
-    lag_info = get_radar_lag_mins()
-    
-    print(f"Radar lag assumption : {lag_info['lag_mins']} mins")
-    print(f"Freshness            : {lag_info['freshness']}")
-    print(f"Message              : {lag_info['message']}")
-    print(f"Frames extracted     : {len(frames)}")
-    print()
-    
-    print(f"WARNING: {lag_info['warning']}")
-    print("Lag correction (25 min) applied to all predictions.")
+    from datetime import datetime, timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
+
+    # Download fresh GIF first
+    frame_data = get_recent_frames(n=6)
+    latest_ts = frame_data[-1][1] if frame_data else None
+    lag_info = get_radar_lag_mins(latest_ts)
+    now = datetime.now(IST)
+
+    print(f"Current time  : {now.strftime('%H:%M:%S IST')}")
+    print(f"Radar time    : {lag_info['radar_time']}")
+    print(f"Lag           : {lag_info['lag_mins']} mins")
+    print(f"Freshness     : {lag_info['freshness']}")
+    print(f"Method        : {lag_info['method']}")
+    print(f"Message       : {lag_info['message']}")

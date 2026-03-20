@@ -1,16 +1,16 @@
 # Garaj Baras - georef.py
 
 # --- Calibration constants (manually verified) ---
-CENTER_PIXEL_X     = 264
-CENTER_PIXEL_Y     = 262
-CENTER_LAT         = 28.5562
-CENTER_LON         = 77.1000
-PIXELS_PER_DEG_LAT = 117.87
-PIXELS_PER_DEG_LON = 103.53
+CENTER_PIXEL_X     = 196
+CENTER_PIXEL_Y     = 246
+CENTER_LAT         = 26.7606
+CENTER_LON         = 80.8893
+PIXELS_PER_DEG_LAT = 86.73
+PIXELS_PER_DEG_LON = 77.44
 
 # Radar image dimensions
-IMAGE_WIDTH        = 527
-IMAGE_HEIGHT       = 525
+IMAGE_WIDTH        = 423
+IMAGE_HEIGHT       = 442
 
 
 def latlon_to_pixel(lat, lon):
@@ -30,17 +30,18 @@ def pixel_to_latlon(px, py):
 def is_within_radar(lat, lon):
     """Check if a lat/lon coordinate falls within the radar image bounds."""
     px, py = latlon_to_pixel(lat, lon)
-    return (0 <= px <= 527 and 0 <= py <= 525)
+    return (0 <= px <= 423 and 0 <= py <= 442)
 
 
 if __name__ == "__main__":
     # Test known locations
     test_locations = [
-        ("IGI Airport", 28.5562, 77.1000),
-        ("Noida", 28.5355, 77.3910),
-        ("Gurugram", 28.4595, 77.0266),
-        ("Ghaziabad", 28.6692, 77.4538),
-        ("Faridabad", 28.4089, 77.3178),
+        ("Lucknow",   26.7606, 80.8893),
+        ("Fatehpur",  25.9298, 80.8133),
+        ("Kanpur",    26.4499, 80.3319),
+        ("Varanasi",  25.3176, 82.9739),
+        ("Sitapur",   27.5706, 80.6829),
+        ("Raebareli", 26.2309, 81.2399),
     ]
 
     print("Testing geo-referencing:")

@@ -88,14 +88,16 @@ def get_movement():
     and speed over Delhi NCR
     """
     try:
-        all_frames, _ = get_all_frames()
-        recent_frames, _ = get_recent_frames(n=6)
-        clutter_mask = build_clutter_mask(all_frames)
+        all_frame_data = get_all_frames()
+        recent_frame_data = get_recent_frames(n=6)
+        all_paths = [p for (p, _ts) in all_frame_data]
+        clutter_mask = build_clutter_mask(all_paths)
         
         dx, dy, dir_from, dir_to, speed = get_movement_vector(
-            recent_frames, clutter_mask=clutter_mask
+            recent_frame_data, clutter_mask=clutter_mask
         )
-        lag_info = get_radar_lag_mins()
+        latest_ts = recent_frame_data[-1][1] if recent_frame_data else None
+        lag_info = get_radar_lag_mins(latest_ts)
         
         return {
             "direction_from": dir_from,
@@ -136,16 +138,18 @@ def predict_rain(route: RouteRequest):
                 )
 
         # Load radar data
-        all_frames, _ = get_all_frames()
-        recent_frames, _ = get_recent_frames(n=6)
-        clutter_mask = build_clutter_mask(all_frames)
+        all_frame_data = get_all_frames()
+        recent_frame_data = get_recent_frames(n=6)
+        all_paths = [p for (p, _ts) in all_frame_data]
+        clutter_mask = build_clutter_mask(all_paths)
 
         # Get movement
         dx, dy, dir_from, dir_to, speed = get_movement_vector(
-            recent_frames, clutter_mask=clutter_mask
+            recent_frame_data, clutter_mask=clutter_mask
         )
-        latest_frame = recent_frames[-1]
-        lag_info = get_radar_lag_mins()
+        latest_frame = recent_frame_data[-1][0] if recent_frame_data else None
+        latest_ts = recent_frame_data[-1][1] if recent_frame_data else None
+        lag_info = get_radar_lag_mins(latest_ts)
 
         # Generate waypoints
         waypoints_latlon = generate_waypoints(
