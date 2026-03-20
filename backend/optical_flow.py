@@ -92,7 +92,7 @@ def get_direction_string(dx, dy):
     dx positive=East, dy positive=South.
     """
     angle = np.degrees(np.arctan2(dy, dx)) % 360
-    bearing = (90 - angle) % 360
+    bearing = (angle + 90) % 360
     directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
     return directions[int((bearing + 22.5) / 45) % 8]
 

@@ -33,9 +33,16 @@ def download_gif(url, save_path):
         return False, None
 
 
+CROP_TOP    = 144          # Remove top brown panel
+CROP_RIGHT  = 527          # Remove right info panel
+CROP_BOTTOM = CROP_TOP + 525  # = 669, gives exact 525px height
+
+
 def extract_frames(gif_path, output_folder):
     """
     Extract all frames from animated GIF to output_folder as PNGs.
+    Each frame is cropped to remove the brown top panel and right info panel,
+    yielding a clean 527x525 radar-circle image.
     Returns list of frame file paths.
     """
     if not os.path.exists(output_folder):
@@ -46,9 +53,17 @@ def extract_frames(gif_path, output_folder):
         with Image.open(gif_path) as im:
             for i, frame in enumerate(ImageSequence.Iterator(im)):
                 frame_rgb = frame.convert('RGB')
+                # Crop to radar circle only
+                frame_cropped = frame_rgb.crop((
+                    0,           # left
+                    CROP_TOP,    # top  (remove brown panel)
+                    CROP_RIGHT,  # right (remove info panel)
+                    CROP_BOTTOM  # bottom (trim to exact 525px height)
+                ))
                 frame_filename = f"frame_{i:02d}.png"
                 frame_path = os.path.join(output_folder, frame_filename)
-                frame_rgb.save(frame_path)
+                # Save cropped frame
+                frame_cropped.save(frame_path)
                 frame_paths.append(frame_path)
     except Exception as e:
         print(f"Error extracting frames: {e}")

@@ -1,16 +1,16 @@
 # Garaj Baras - georef.py
 
 # --- Calibration constants (manually verified) ---
-CENTER_PIXEL_X = 284
-CENTER_PIXEL_Y = 435
-CENTER_LAT = 28.5562
-CENTER_LON = 77.1000
-PIXELS_PER_DEG_LAT = 126.77
-PIXELS_PER_DEG_LON = 111.34
+CENTER_PIXEL_X     = 264
+CENTER_PIXEL_Y     = 262
+CENTER_LAT         = 28.5562
+CENTER_LON         = 77.1000
+PIXELS_PER_DEG_LAT = 117.87
+PIXELS_PER_DEG_LON = 103.53
 
 # Radar image dimensions
-IMAGE_WIDTH = 880
-IMAGE_HEIGHT = 720
+IMAGE_WIDTH        = 527
+IMAGE_HEIGHT       = 525
 
 
 def latlon_to_pixel(lat, lon):
@@ -30,7 +30,7 @@ def pixel_to_latlon(px, py):
 def is_within_radar(lat, lon):
     """Check if a lat/lon coordinate falls within the radar image bounds."""
     px, py = latlon_to_pixel(lat, lon)
-    return 0 <= px < IMAGE_WIDTH and 0 <= py < IMAGE_HEIGHT
+    return (0 <= px <= 527 and 0 <= py <= 525)
 
 
 if __name__ == "__main__":

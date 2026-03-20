@@ -130,9 +130,9 @@ if __name__ == "__main__":
 
     print()
 
-    # Test 2: Full pipeline Bijnor -> Muzaffarnagar
+    # Test 2: Full pipeline Sec 62 Noida -> Sec 128 Noida
     print("=" * 55)
-    print("ROUTE TEST: Badaun -> Bulandshahr (FIXED LAG)")
+    print("ROUTE TEST: Sec 62 Noida -> Sec 128 Noida (FIXED LAG)")
     print("=" * 55)
 
     from radar import get_recent_frames, get_all_frames, get_radar_lag_mins
@@ -156,8 +156,8 @@ if __name__ == "__main__":
     print(f"Rain moves     : FROM {dir_from} -> TO {dir_to} at {speed:.1f} km/h")
     print()
 
-    start = (28.0315, 79.1247)  # Badaun
-    end   = (28.4070, 77.8498)  # Bulandshahr
+    start = (28.6270, 77.3724)  # Sec 62 Noida
+    end   = (28.5180, 77.3900)  # Sec 128 Noida
 
     start_in = is_within_radar(start[0], start[1])
     end_in   = is_within_radar(end[0],   end[1])
