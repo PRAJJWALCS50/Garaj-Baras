@@ -1,8 +1,8 @@
+backend/frames/
 backend/venv/
+backend/delhi_radar.gif
+*.gif
 __pycache__/
 *.pyc
-*.pyo
-.env
-*.egg-info/
-dist/
-build/
+*.png
+backend/debug_*.png
