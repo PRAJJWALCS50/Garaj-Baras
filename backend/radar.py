@@ -5,7 +5,7 @@ import requests
 from PIL import Image, ImageSequence
 from datetime import datetime, timezone, timedelta
 
-GIF_URL = "https://mausam.imd.gov.in/Radar/animation/Converted/LKN_MAXZ.gif"
+GIF_URL = "https://mausam.imd.gov.in/Radar/animation/Converted/DELHI_MAXZ.gif"
 GIF_SAVE_PATH = os.path.join(os.path.dirname(__file__), "delhi_radar.gif")
 FRAMES_FOLDER = os.path.join(os.path.dirname(__file__), "frames")
 
@@ -33,9 +33,9 @@ def download_gif(url, save_path):
         return False, None
 
 
-CROP_TOP    = 126          # Remove top brown panel
-CROP_RIGHT  = 423          # Remove right info panel
-CROP_BOTTOM = 568          # Crop bottom (full image y)
+CROP_TOP    = 125          # Remove top brown panel
+CROP_RIGHT  = 579          # Remove right info panel
+CROP_BOTTOM = 720          # Crop bottom (full image y)
 
 
 def extract_frames(gif_path, output_folder):
@@ -77,7 +77,7 @@ def extract_frames(gif_path, output_folder):
                     try:
                         from PIL import ImageEnhance
 
-                        ts_crop = full.crop((451, 130, 673, 279))
+                        ts_crop = full.crop((614, 230, 820, 310))
                         w, h = ts_crop.size
                         ts_large = ts_crop.resize((w * 3, h * 3), Image.LANCZOS)
                         ts_gray = ts_large.convert('L')
@@ -164,7 +164,7 @@ def extract_frames(gif_path, output_folder):
                 frame_data.append((frame_path, timestamp))
 
                 if i == 0:
-                    print("Lucknow crop frame size: %s" % (frame_cropped.size,))
+                    print("Delhi crop frame size: %s" % (frame_cropped.size,))
     except Exception as e:
         print(f"Error extracting frames: {e}")
 

@@ -1,0 +1,851 @@
+.app {
+  min-height: 100vh;
+  background: var(--bg-primary);
+  padding-bottom: 80px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+}
+
+.brand {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--text-primary);
+}
+
+.menu-icon {
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--accent-blue);
+}
+
+.placeholder {
+  width: 20px;
+}
+
+/* Hero */
+.hero {
+  padding: 8px 24px 20px;
+}
+
+.hero-title {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.hero-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+}
+
+/* Search Card */
+.search-card {
+  margin: 0 16px;
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid #1E2A42;
+}
+
+.input-group {
+  display: flex;
+  align-items: center;
+  background: var(--bg-input);
+  border-radius: 10px;
+  padding: 14px 16px;
+  gap: 12px;
+}
+
+.input-icon {
+  font-size: 16px;
+}
+
+.source-icon { color: var(--accent-blue); }
+.dest-icon { color: #F59E0B; }
+
+.route-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 15px;
+  width: 100%;
+}
+
+.route-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.divider-line {
+  height: 1px;
+  background: #1E2A42;
+  margin: 10px 0;
+}
+
+.plan-button {
+  width: 100%;
+  padding: 16px;
+  background: linear-gradient(135deg, #4FC3F7, #6C63FF);
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 12px;
+  letter-spacing: 0.5px;
+}
+
+.plan-button:active {
+  opacity: 0.9;
+  transform: scale(0.99);
+}
+
+/* Location Card */
+.location-card {
+  margin: 16px 16px 0;
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #1E2A42;
+}
+
+.location-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 2px;
+  font-weight: 600;
+}
+
+.location-name {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 4px 0;
+}
+
+.location-weather {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.weather-icon {
+  font-size: 36px;
+}
+
+/* Map Section */
+.map-section {
+  margin: 16px 16px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  height: 200px;
+  background: #0D1424;
+  border: 1px solid #1E2A42;
+  position: relative;
+}
+
+.map-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background: linear-gradient(180deg, #0D1A2E 0%, #0A1520 100%);
+}
+
+.active-radar-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(20, 27, 45, 0.9);
+  border: 1px solid #1E2A42;
+  border-radius: 20px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-primary);
+}
+
+.radar-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-blue);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.2); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.map-arrow {
+  font-size: 32px;
+  color: var(--accent-blue);
+  opacity: 0.8;
+}
+
+/* Recent Paths */
+.recent-section {
+  margin: 24px 16px 0;
+}
+
+.recent-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.recent-header h3 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.path-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.path-item {
+  background: var(--bg-card);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #1E2A42;
+}
+
+.path-icon {
+  width: 42px;
+  height: 42px;
+  background: var(--bg-input);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.path-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.path-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+/* Bottom Navigation */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  background: var(--bg-card);
+  border-top: 1px solid #1E2A42;
+  display: flex;
+  justify-content: space-around;
+  padding: 12px 0 20px;
+  z-index: 100;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  opacity: 0.5;
+}
+
+.nav-item.active {
+  opacity: 1;
+  color: var(--accent-blue);
+}
+
+.nav-item span {
+  font-size: 20px;
+}
+
+.nav-item p {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+/* ------------------------------ */
+/* Garaj Baras Premium UI (Home/Results) */
+/* ------------------------------ */
+
+.app {
+  min-height: 100vh;
+  background: var(--bg-primary);
+  padding-bottom: 24px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 18px 8px;
+}
+
+.brandTitle {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--text-primary);
+}
+
+.menuButton {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 27, 45, 0.65);
+  color: var(--accent-1);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.menuButton:hover {
+  transform: translateY(-1px);
+  border-color: rgba(79, 195, 247, 0.35);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.08);
+}
+
+.screen {
+  padding: 0 16px 24px;
+}
+
+.heroBlock {
+  padding-top: 8px;
+}
+
+.heroTitle {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 40px;
+  line-height: 1.08;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.heroSubtitle {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.card {
+  background: linear-gradient(180deg, rgba(20, 27, 45, 0.95), rgba(20, 27, 45, 0.75));
+  border: 1px solid rgba(79, 195, 247, 0.18);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.plannerCard {
+  margin-top: 16px;
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.field {
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.inputShell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(15, 26, 51, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  padding: 12px 12px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.inputShell:focus-within {
+  border-color: rgba(79, 195, 247, 0.55);
+  box-shadow: 0 0 0 5px rgba(79, 195, 247, 0.12);
+  transform: translateY(-1px);
+}
+
+.routeInput {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.routeInput::placeholder {
+  color: rgba(136, 150, 179, 0.85);
+}
+
+.glowDot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.glowDot::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(79, 195, 247, 0.35), rgba(79, 195, 247, 0));
+  opacity: 0.9;
+  animation: radarPulse 1.6s ease-in-out infinite;
+}
+
+.glowDot--source {
+  background: var(--accent-1);
+}
+
+.glowDot--destination {
+  background: var(--dot-destination);
+}
+
+.glowDot--destination::after {
+  background: radial-gradient(circle, rgba(245, 158, 11, 0.35), rgba(245, 158, 11, 0));
+  animation-duration: 1.9s;
+}
+
+.swapButton {
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(13, 20, 36, 0.7);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.swapButton:hover {
+  transform: translateY(-1px);
+  border-color: rgba(79, 195, 247, 0.4);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.10);
+}
+
+.planButton {
+  width: 100%;
+  margin-top: 14px;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.2px;
+  color: #06101F;
+  background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 14px 34px rgba(79, 195, 247, 0.20);
+  transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+
+.planButton:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.planButton::before {
+  content: '';
+  position: absolute;
+  top: -30%;
+  left: -60%;
+  width: 40%;
+  height: 160%;
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: rotate(12deg);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.planButton:hover::before {
+  opacity: 1;
+  animation: shimmer 900ms ease forwards;
+}
+
+.planButton:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 44px rgba(79, 195, 247, 0.28);
+  filter: saturate(1.05);
+}
+
+.radarStatus {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.radarLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.radarDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-1);
+  box-shadow: 0 0 16px rgba(79, 195, 247, 0.55);
+  animation: radarDotPulse 1.3s ease-in-out infinite;
+}
+
+.radarText {
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.radarSub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.dividerMini {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 14px 0 0;
+}
+
+/* Loading state */
+.loadingCard {
+  margin-top: 16px;
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid rgba(79, 195, 247, 0.25);
+  border-top-color: rgba(79, 195, 247, 1);
+  animation: spin 850ms linear infinite;
+  box-shadow: 0 0 22px rgba(79, 195, 247, 0.35);
+}
+
+.loadingText {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--text-primary);
+  font-size: 14px;
+  letter-spacing: 1px;
+  font-weight: 800;
+}
+
+.errorCard {
+  margin-top: 16px;
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.20), rgba(239, 68, 68, 0.12));
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: rgba(255, 255, 255, 0.95);
+  border-radius: 18px;
+  padding: 14px 16px;
+}
+
+.errorTitle {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.errorBody {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.88);
+  line-height: 1.35;
+}
+
+/* Results */
+.resultsWrap {
+  margin-top: 12px;
+  animation: fadeUp 500ms ease both;
+}
+
+.resultsCard {
+  margin-top: 16px;
+}
+
+.routeName {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.2px;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+.summaryTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rainBadge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  border: 1px solid rgba(79, 195, 247, 0.25);
+}
+
+.rainBadge--rain {
+  background: rgba(79, 195, 247, 0.12);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.08);
+}
+
+.rainBadge--clear {
+  background: rgba(79, 195, 247, 0.06);
+  opacity: 0.95;
+}
+
+.statsRow {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.statBox {
+  padding: 12px 10px;
+  border-radius: 14px;
+  background: rgba(13, 20, 36, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.statLabel {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.7px;
+  font-weight: 800;
+}
+
+.statValue {
+  margin-top: 6px;
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.directionRow {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px;
+  border-radius: 16px;
+  background: rgba(13, 20, 36, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.directionText {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.directionSub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.waypointList {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+
+.waypointItem {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(13, 20, 36, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.waypointItem:hover {
+  transform: translateY(-2px);
+  border-color: rgba(79, 195, 247, 0.28);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.08);
+}
+
+.waypointDot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dot-clear);
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.waypointDot--light {
+  background: var(--dot-light);
+  box-shadow: 0 0 20px rgba(96, 165, 250, 0.25);
+}
+
+.waypointDot--moderate {
+  background: var(--dot-moderate);
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.35);
+}
+
+.waypointDot--heavy {
+  background: var(--dot-heavy);
+  box-shadow: 0 0 28px rgba(29, 78, 216, 0.45);
+}
+
+.waypointDot--clear {
+  background: var(--dot-clear);
+  box-shadow: none;
+  opacity: 0.75;
+}
+
+.waypointGlow {
+  animation: waypointGlow 1.2s ease-in-out infinite;
+}
+
+.waypointMeta {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.waypointLabel {
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.waypointEta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+/* ------------------------------ */
+/* Animations */
+/* ------------------------------ */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes radarDotPulse {
+  0% { transform: scale(1); box-shadow: 0 0 12px rgba(79, 195, 247, 0.55); opacity: 0.95; }
+  50% { transform: scale(1.25); box-shadow: 0 0 28px rgba(79, 195, 247, 0.85); opacity: 0.75; }
+  100% { transform: scale(1); box-shadow: 0 0 12px rgba(79, 195, 247, 0.55); opacity: 0.95; }
+}
+
+@keyframes radarPulse {
+  0% { opacity: 0.75; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 0.75; transform: scale(1); }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-160%) rotate(12deg); }
+  100% { transform: translateX(320%) rotate(12deg); }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes waypointGlow {
+  0% { box-shadow: 0 0 0 rgba(0,0,0,0); }
+  50% { box-shadow: 0 0 22px rgba(79, 195, 247, 0.30); }
+  100% { box-shadow: 0 0 0 rgba(0,0,0,0); }
+}
+
+/* Leaflet map container */
+.map-container {
+  margin: 16px 16px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid #0E2A45;
+}
