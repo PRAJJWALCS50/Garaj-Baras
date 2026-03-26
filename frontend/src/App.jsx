@@ -282,6 +282,7 @@ function joinApiUrl(maybePath) {
 }
 
 export default function App() {
+  const [showWelcomePopup, setShowWelcomePopup] = useState(true)
   const [source, setSource] = useState('')
   const [destination, setDestination] = useState('')
   const [avgSpeedKmh, setAvgSpeedKmh] = useState('')
@@ -573,6 +574,23 @@ export default function App() {
 
   return (
     <div className="app">
+      {showWelcomePopup && (
+        <div className="welcomeOverlay" role="dialog" aria-modal="true" aria-label="Service area notice">
+          <div className="welcomeCard">
+            <div className="welcomeTitle">Garaj Baras</div>
+            <div className="welcomeText">
+              Currently serving in Delhi-NCR and nearby locations.
+            </div>
+            <button
+              type="button"
+              className="welcomeBtn"
+              onClick={() => setShowWelcomePopup(false)}
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
       <header className="topbar">
         <div style={{ width: 36 }} />
         <div className="brandTitle">GARAJ BARAS</div>

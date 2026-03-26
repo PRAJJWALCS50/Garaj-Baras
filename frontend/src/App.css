@@ -346,6 +346,55 @@
   padding: 0 16px 24px;
 }
 
+.welcomeOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(2, 8, 22, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.welcomeCard {
+  width: min(92vw, 420px);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(20, 27, 45, 0.98), rgba(20, 27, 45, 0.9));
+  border: 1px solid rgba(79, 195, 247, 0.26);
+  box-shadow:
+    0 20px 44px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  padding: 18px;
+}
+
+.welcomeTitle {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--text-primary);
+}
+
+.welcomeText {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.4;
+  font-size: 14px;
+}
+
+.welcomeBtn {
+  margin-top: 14px;
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 850;
+  color: #06101F;
+  background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+}
+
 .heroBlock {
   padding-top: 8px;
 }
