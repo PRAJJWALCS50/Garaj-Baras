@@ -365,6 +365,29 @@
     0 20px 44px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
   padding: 18px;
+  position: relative;
+  overflow: hidden;
+  animation: stormCardIn 480ms ease-out both;
+}
+
+.welcomeStorm {
+  position: absolute;
+  top: -18px;
+  right: -14px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(79, 195, 247, 0.22), rgba(79, 195, 247, 0));
+  animation: stormGlow 1.4s ease-in-out infinite;
+}
+
+.welcomeBolt {
+  position: absolute;
+  right: 30px;
+  top: 26px;
+  font-size: 26px;
+  filter: drop-shadow(0 0 10px rgba(79, 195, 247, 0.65));
+  animation: boltRoll 1.2s ease-in-out infinite;
 }
 
 .welcomeTitle {
@@ -393,6 +416,23 @@
   font-weight: 850;
   color: #06101F;
   background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+}
+
+@keyframes stormCardIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes stormGlow {
+  0% { opacity: 0.55; transform: translateX(0) scale(0.95); }
+  50% { opacity: 0.95; transform: translateX(-6px) scale(1.08); }
+  100% { opacity: 0.55; transform: translateX(0) scale(0.95); }
+}
+
+@keyframes boltRoll {
+  0% { transform: translateX(0) rotate(-8deg); opacity: 0.8; }
+  45% { transform: translateX(-8px) rotate(8deg); opacity: 1; }
+  100% { transform: translateX(0) rotate(-8deg); opacity: 0.8; }
 }
 
 .heroBlock {

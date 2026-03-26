@@ -309,11 +309,59 @@ export default function App() {
 
   const reverseAbortRef = useRef(null)
   const reverseCacheRef = useRef(new Map())
+  const audioCtxRef = useRef(null)
 
   const routeName = useMemo(
     () => toCityRouteName(source, destination),
     [source, destination]
   )
+
+  function playThunderIfNeeded(rainWaypointsCount) {
+    if (!Number.isFinite(Number(rainWaypointsCount)) || Number(rainWaypointsCount) <= 0) return
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext
+      if (!AudioCtx) return
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx()
+      const ctx = audioCtxRef.current
+      if (ctx.state === 'suspended') ctx.resume()
+
+      const now = ctx.currentTime
+      const duration = 1.6
+      const bufferSize = Math.floor(ctx.sampleRate * duration)
+      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
+      const data = noiseBuffer.getChannelData(0)
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize)
+      }
+
+      const noise = ctx.createBufferSource()
+      noise.buffer = noiseBuffer
+
+      const bandpass = ctx.createBiquadFilter()
+      bandpass.type = 'bandpass'
+      bandpass.frequency.setValueAtTime(120, now)
+      bandpass.Q.setValueAtTime(0.8, now)
+
+      const lowpass = ctx.createBiquadFilter()
+      lowpass.type = 'lowpass'
+      lowpass.frequency.setValueAtTime(900, now)
+
+      const gain = ctx.createGain()
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.55, now + 0.03)
+      gain.gain.exponentialRampToValueAtTime(0.22, now + 0.16)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+
+      noise.connect(bandpass)
+      bandpass.connect(lowpass)
+      lowpass.connect(gain)
+      gain.connect(ctx.destination)
+      noise.start(now)
+      noise.stop(now + duration)
+    } catch (_e) {
+      // Best-effort effect
+    }
+  }
 
   // Autocomplete: Source
   useEffect(() => {
@@ -482,6 +530,7 @@ export default function App() {
 
       const segments = buildColoredSegments(routeLonLat, mergedWaypoints)
       setRouteSegments(segments)
+      playThunderIfNeeded(predictRes.data?.rain_waypoints)
 
       setResult({
         ...predictRes.data,
@@ -577,6 +626,9 @@ export default function App() {
       {showWelcomePopup && (
         <div className="welcomeOverlay" role="dialog" aria-modal="true" aria-label="Service area notice">
           <div className="welcomeCard">
+            <div className="welcomeStorm" aria-hidden="true">
+              <span className="welcomeBolt">⚡</span>
+            </div>
             <div className="welcomeTitle">Garaj Baras</div>
             <div className="welcomeText">
               Currently serving in Delhi-NCR and nearby locations.
