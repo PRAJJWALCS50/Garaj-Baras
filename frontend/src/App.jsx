@@ -19,6 +19,7 @@ const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse'
 const NOMINATIM_USER_AGENT = 'GarajBaras/1.0'
 
 const ORS_KEY = import.meta.env.VITE_ORS_API_KEY
+const THUNDER_SOUND_URL = '/mixkit-thunder-deep-rumble-1296.wav'
 
 // Rough Delhi NCR bounding box (tune anytime): left,top,right,bottom (lon,lat,lon,lat)
 const NCR_VIEWBOX = '76.5,29.7,78.9,28.0'
@@ -309,7 +310,7 @@ export default function App() {
 
   const reverseAbortRef = useRef(null)
   const reverseCacheRef = useRef(new Map())
-  const audioCtxRef = useRef(null)
+  const thunderAudioRef = useRef(null)
 
   const routeName = useMemo(
     () => toCityRouteName(source, destination),
@@ -318,89 +319,26 @@ export default function App() {
 
   function playThunderIfNeeded(rainWaypointsCount) {
     if (!Number.isFinite(Number(rainWaypointsCount)) || Number(rainWaypointsCount) <= 0) return
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext
-      if (!AudioCtx) return
-      if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx()
-      const ctx = audioCtxRef.current
-      if (ctx.state === 'suspended') ctx.resume()
-
-      const now = ctx.currentTime
-      const duration = 3.2
-      const bufferSize = Math.floor(ctx.sampleRate * duration)
-      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
-      const data = noiseBuffer.getChannelData(0)
-      for (let i = 0; i < bufferSize; i++) {
-        const t = i / bufferSize
-        // Keep enough energy in the tail to feel like rolling rumble.
-        const env = 1 - 0.55 * t
-        data[i] = (Math.random() * 2 - 1) * env
-      }
-
-      const noise = ctx.createBufferSource()
-      noise.buffer = noiseBuffer
-
-      const bandpass = ctx.createBiquadFilter()
-      bandpass.type = 'bandpass'
-      bandpass.frequency.setValueAtTime(95, now)
-      bandpass.Q.setValueAtTime(0.7, now)
-
-      const lowpass = ctx.createBiquadFilter()
-      lowpass.type = 'lowpass'
-      lowpass.frequency.setValueAtTime(520, now)
-
-      const crackGain = ctx.createGain()
-      crackGain.gain.setValueAtTime(0.0001, now)
-      crackGain.gain.exponentialRampToValueAtTime(0.9, now + 0.025)
-      crackGain.gain.exponentialRampToValueAtTime(0.28, now + 0.25)
-      crackGain.gain.exponentialRampToValueAtTime(0.06, now + 1.25)
-      crackGain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-
-      // Add a low sine sweep for chesty rumble.
-      const rumbleOsc = ctx.createOscillator()
-      rumbleOsc.type = 'sine'
-      rumbleOsc.frequency.setValueAtTime(58, now)
-      rumbleOsc.frequency.exponentialRampToValueAtTime(34, now + duration)
-
-      const rumbleGain = ctx.createGain()
-      rumbleGain.gain.setValueAtTime(0.0001, now)
-      rumbleGain.gain.exponentialRampToValueAtTime(0.2, now + 0.09)
-      rumbleGain.gain.exponentialRampToValueAtTime(0.12, now + 1.2)
-      rumbleGain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-
-      // Add an extra delayed rumble burst.
-      const tailNoise = ctx.createBufferSource()
-      tailNoise.buffer = noiseBuffer
-      const tailLowpass = ctx.createBiquadFilter()
-      tailLowpass.type = 'lowpass'
-      tailLowpass.frequency.setValueAtTime(220, now)
-      const tailGain = ctx.createGain()
-      tailGain.gain.setValueAtTime(0.0001, now)
-      tailGain.gain.exponentialRampToValueAtTime(0.001, now + 0.55)
-      tailGain.gain.exponentialRampToValueAtTime(0.22, now + 0.95)
-      tailGain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-
-      noise.connect(bandpass)
-      bandpass.connect(lowpass)
-      lowpass.connect(crackGain)
-      crackGain.connect(ctx.destination)
-
-      rumbleOsc.connect(rumbleGain)
-      rumbleGain.connect(ctx.destination)
-
-      tailNoise.connect(tailLowpass)
-      tailLowpass.connect(tailGain)
-      tailGain.connect(ctx.destination)
-
-      noise.start(now)
-      noise.stop(now + duration)
-      rumbleOsc.start(now)
-      rumbleOsc.stop(now + duration)
-      tailNoise.start(now + 0.45)
-      tailNoise.stop(now + duration)
-    } catch (_e) {
-      // Best-effort effect
+    if (!thunderAudioRef.current) {
+      thunderAudioRef.current = new Audio(THUNDER_SOUND_URL)
+      thunderAudioRef.current.preload = 'auto'
     }
+    const audio = thunderAudioRef.current
+    audio.currentTime = 0
+    audio.volume = 1.0
+    audio.loop = false
+    // Play only the first ~6 seconds as requested.
+    const onTimeUpdate = () => {
+      if (audio.currentTime >= 6) {
+        audio.pause()
+        audio.currentTime = 0
+        audio.removeEventListener('timeupdate', onTimeUpdate)
+      }
+    }
+    audio.addEventListener('timeupdate', onTimeUpdate)
+    audio.play().catch(() => {
+      audio.removeEventListener('timeupdate', onTimeUpdate)
+    })
   }
 
   // Autocomplete: Source
