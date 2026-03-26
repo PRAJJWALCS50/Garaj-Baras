@@ -326,12 +326,15 @@ export default function App() {
       if (ctx.state === 'suspended') ctx.resume()
 
       const now = ctx.currentTime
-      const duration = 1.6
+      const duration = 3.2
       const bufferSize = Math.floor(ctx.sampleRate * duration)
       const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
       const data = noiseBuffer.getChannelData(0)
       for (let i = 0; i < bufferSize; i++) {
-        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize)
+        const t = i / bufferSize
+        // Keep enough energy in the tail to feel like rolling rumble.
+        const env = 1 - 0.55 * t
+        data[i] = (Math.random() * 2 - 1) * env
       }
 
       const noise = ctx.createBufferSource()
@@ -339,25 +342,62 @@ export default function App() {
 
       const bandpass = ctx.createBiquadFilter()
       bandpass.type = 'bandpass'
-      bandpass.frequency.setValueAtTime(120, now)
-      bandpass.Q.setValueAtTime(0.8, now)
+      bandpass.frequency.setValueAtTime(95, now)
+      bandpass.Q.setValueAtTime(0.7, now)
 
       const lowpass = ctx.createBiquadFilter()
       lowpass.type = 'lowpass'
-      lowpass.frequency.setValueAtTime(900, now)
+      lowpass.frequency.setValueAtTime(520, now)
 
-      const gain = ctx.createGain()
-      gain.gain.setValueAtTime(0.0001, now)
-      gain.gain.exponentialRampToValueAtTime(0.55, now + 0.03)
-      gain.gain.exponentialRampToValueAtTime(0.22, now + 0.16)
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+      const crackGain = ctx.createGain()
+      crackGain.gain.setValueAtTime(0.0001, now)
+      crackGain.gain.exponentialRampToValueAtTime(0.9, now + 0.025)
+      crackGain.gain.exponentialRampToValueAtTime(0.28, now + 0.25)
+      crackGain.gain.exponentialRampToValueAtTime(0.06, now + 1.25)
+      crackGain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+
+      // Add a low sine sweep for chesty rumble.
+      const rumbleOsc = ctx.createOscillator()
+      rumbleOsc.type = 'sine'
+      rumbleOsc.frequency.setValueAtTime(58, now)
+      rumbleOsc.frequency.exponentialRampToValueAtTime(34, now + duration)
+
+      const rumbleGain = ctx.createGain()
+      rumbleGain.gain.setValueAtTime(0.0001, now)
+      rumbleGain.gain.exponentialRampToValueAtTime(0.2, now + 0.09)
+      rumbleGain.gain.exponentialRampToValueAtTime(0.12, now + 1.2)
+      rumbleGain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+
+      // Add an extra delayed rumble burst.
+      const tailNoise = ctx.createBufferSource()
+      tailNoise.buffer = noiseBuffer
+      const tailLowpass = ctx.createBiquadFilter()
+      tailLowpass.type = 'lowpass'
+      tailLowpass.frequency.setValueAtTime(220, now)
+      const tailGain = ctx.createGain()
+      tailGain.gain.setValueAtTime(0.0001, now)
+      tailGain.gain.exponentialRampToValueAtTime(0.001, now + 0.55)
+      tailGain.gain.exponentialRampToValueAtTime(0.22, now + 0.95)
+      tailGain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
 
       noise.connect(bandpass)
       bandpass.connect(lowpass)
-      lowpass.connect(gain)
-      gain.connect(ctx.destination)
+      lowpass.connect(crackGain)
+      crackGain.connect(ctx.destination)
+
+      rumbleOsc.connect(rumbleGain)
+      rumbleGain.connect(ctx.destination)
+
+      tailNoise.connect(tailLowpass)
+      tailLowpass.connect(tailGain)
+      tailGain.connect(ctx.destination)
+
       noise.start(now)
       noise.stop(now + duration)
+      rumbleOsc.start(now)
+      rumbleOsc.stop(now + duration)
+      tailNoise.start(now + 0.45)
+      tailNoise.stop(now + duration)
     } catch (_e) {
       // Best-effort effect
     }
