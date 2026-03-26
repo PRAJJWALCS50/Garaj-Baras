@@ -1,41 +1,50 @@
+import logging
 import math
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import cv2
+import requests
 from PIL import Image
 from optical_flow import isolate_rain
+
+logger = logging.getLogger(__name__)
+
+# Public OSRM demo server — rate-limited; use self-hosted OSRM in production.
+OSRM_ROUTE_URL = "http://router.project-osrm.org/route/v1/driving/{coords}"
+OSRM_REQUEST_TIMEOUT_SEC = 12.0
+
+DRIVING_SPEED_KMH = 40.0  # legacy fallback: city driving speed for Delhi NCR
 
 
 def debug_route_on_image(frames, waypoints_pixels, clutter_mask):
     """
-    Temporary debug: Prints the raw pixel color at each waypoint 
+    Temporary debug: Prints the raw pixel color at each waypoint
     to see what's actually under the hood.
     """
     img = Image.open(frames[-1]).convert('RGB')
     arr = np.array(img)
-    
+
     print("\nDEBUG: Pixel colors at each waypoint:")
     for i, (px, py, eta) in enumerate(waypoints_pixels):
         # Clip coordinates to image bounds
         h, w = arr.shape[:2]
         safe_y = max(0, min(py, h - 1))
         safe_x = max(0, min(px, w - 1))
-        
+
         r, g, b = arr[safe_y, safe_x]
-        
+
         # Simple classification heuristics
         is_green = (70 < r < 180) and (100 < g < 200) and (40 < b < 100)
-        is_blue  = (b > 150) and (r < 100)
+        is_blue = (b > 150) and (r < 100)
         is_clutter = clutter_mask[safe_y, safe_x] > 0
-        
+
         label = "GREEN(background)" if is_green else \
                 "BLUE(rain)" if is_blue else \
                 "OTHER"
         clutter_status = "CLUTTER" if is_clutter else "clean"
-        
+
         print(f"  WP{i+1:02d} pixel({px:3d},{py:3d}) RGB({r:3d},{g:3d},{b:3d}) -> {label} | {clutter_status}")
-
-
-DRIVING_SPEED_KMH = 40.0  # city driving speed for Delhi NCR
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -51,38 +60,400 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return R * 2 * math.asin(math.sqrt(a))
 
 
-def generate_waypoints(start_latlon, end_latlon, spacing_km=2.0):
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in meters."""
+    return haversine_km(lat1, lon1, lat2, lon2) * 1000.0
+
+
+def decode_polyline(polyline_str: str, precision: int = 5) -> List[Tuple[float, float]]:
     """
-    Generate evenly spaced waypoints between start and end coordinates.
+    Decode an OSRM/Google encoded polyline to [(lon, lat), ...].
+    """
+    if not polyline_str:
+        return []
+    index = 0
+    lat = 0
+    lng = 0
+    coordinates: List[Tuple[float, float]] = []
+    factor = float(10 ** precision)
+    length = len(polyline_str)
 
-    Args:
-        start_latlon : (lat, lon) tuple
-        end_latlon   : (lat, lon) tuple
-        spacing_km   : distance between consecutive waypoints in km (default 2.0)
+    while index < length:
+        # latitude
+        shift = 0
+        result = 0
+        while True:
+            if index >= length:
+                return coordinates
+            b = ord(polyline_str[index]) - 63
+            index += 1
+            result |= (b & 0x1F) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        dlat = ~(result >> 1) if (result & 1) else (result >> 1)
+        lat += dlat
 
-    Returns:
-        list of (lat, lon, eta_mins) tuples
-        ETA calculated assuming DRIVING_SPEED_KMH (40 km/h city speed).
-        Always includes start (eta=0) and end point.
+        # longitude
+        shift = 0
+        result = 0
+        while True:
+            if index >= length:
+                return coordinates
+            b = ord(polyline_str[index]) - 63
+            index += 1
+            result |= (b & 0x1F) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        dlng = ~(result >> 1) if (result & 1) else (result >> 1)
+        lng += dlng
+
+        coordinates.append((lng / factor, lat / factor))
+
+    return coordinates
+
+
+def _fetch_osrm_route_json(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+) -> Optional[Dict[str, Any]]:
+    """
+    Request route from public OSRM with full geometry and steps (per-segment duration/distance).
+    Returns parsed JSON dict or None on failure.
+    """
+    # OSRM expects lon,lat order in the URL
+    coords = f"{start_lon},{start_lat};{end_lon},{end_lat}"
+    url = OSRM_ROUTE_URL.format(coords=coords)
+    params = {
+        "overview": "full",
+        "steps": "true",
+        "geometries": "polyline",
+    }
+    try:
+        resp = requests.get(
+            url,
+            params=params,
+            timeout=OSRM_REQUEST_TIMEOUT_SEC,
+        )
+    except requests.RequestException as e:
+        logger.warning("OSRM request failed: %s", e)
+        return None
+
+    if resp.status_code >= 400:
+        logger.warning("OSRM HTTP %s: %s", resp.status_code, resp.text[:200])
+        return None
+
+    try:
+        data = resp.json()
+    except ValueError as e:
+        logger.warning("OSRM JSON parse error: %s", e)
+        return None
+
+    if data.get("code") != "Ok" or not data.get("routes"):
+        logger.warning("OSRM bad response code=%s routes=%s", data.get("code"), bool(data.get("routes")))
+        return None
+
+    return data
+
+
+def _timed_points_from_steps(steps: List[Dict[str, Any]], route_duration_sec: float) -> List[Tuple[float, float, float]]:
+    """
+    Build dense (lat, lon, time_sec) along the route using each step's duration
+    and decoded step geometry. Time increases linearly with distance along each step's polyline.
+    """
+    timed: List[Tuple[float, float, float]] = []
+    step_start_sec = 0.0
+
+    for step in steps:
+        geom = step.get("geometry")
+        if not geom:
+            continue
+        dur = float(step.get("duration", 0.0))
+        coords = decode_polyline(geom)
+        if not coords:
+            continue
+
+        # segment lengths in meters along decoded vertices
+        seg_lens: List[float] = []
+        for i in range(len(coords) - 1):
+            lon1, lat1 = coords[i]
+            lon2, lat2 = coords[i + 1]
+            seg_lens.append(haversine_m(lat1, lon1, lat2, lon2))
+        total_len = sum(seg_lens)
+
+        if len(coords) == 1:
+            lon, lat = coords[0]
+            timed.append((lat, lon, step_start_sec))
+            step_start_sec += dur
+            continue
+
+        if total_len < 1e-3:
+            # Degenerate: stack all points at same time gradient — advance full duration at last point
+            for i, (lon, lat) in enumerate(coords):
+                frac = i / max(1, len(coords) - 1)
+                t = step_start_sec + frac * dur
+                timed.append((lat, lon, t))
+            step_start_sec += dur
+            continue
+
+        cum_m = 0.0
+        for i, (lon, lat) in enumerate(coords):
+            if i == 0:
+                t = step_start_sec
+            else:
+                cum_m += seg_lens[i - 1]
+                frac = cum_m / total_len
+                t = step_start_sec + frac * dur
+            timed.append((lat, lon, t))
+
+        step_start_sec += dur
+
+    # If steps produced nothing usable, return empty
+    if not timed:
+        return []
+
+    # Snap last point to route total duration if OSRM step sum drifted slightly
+    expected_end = float(route_duration_sec)
+    if timed[-1][2] < expected_end - 1.0 or timed[-1][2] > expected_end + 1.0:
+        lat, lon, _ = timed[-1]
+        timed[-1] = (lat, lon, expected_end)
+    return timed
+
+
+def _timed_points_from_route_geometry(route: Dict[str, Any]) -> List[Tuple[float, float, float]]:
+    """
+    Fallback: single encoded geometry for whole route + linear time by accumulated path length.
+    """
+    geom = route.get("geometry")
+    if not geom:
+        return []
+    dur = float(route.get("duration", 0.0))
+    coords = decode_polyline(geom)
+    if not coords:
+        return []
+
+    seg_lens: List[float] = []
+    for i in range(len(coords) - 1):
+        lon1, lat1 = coords[i]
+        lon2, lat2 = coords[i + 1]
+        seg_lens.append(haversine_m(lat1, lon1, lat2, lon2))
+    total_len = sum(seg_lens) or 1e-6
+
+    timed: List[Tuple[float, float, float]] = []
+    cum_m = 0.0
+    for i, (lon, lat) in enumerate(coords):
+        if i == 0:
+            t = 0.0
+        else:
+            cum_m += seg_lens[i - 1]
+            t = dur * (cum_m / total_len)
+        timed.append((lat, lon, t))
+    return timed
+
+
+def _merge_duplicate_vertices(timed: List[Tuple[float, float, float]]) -> List[Tuple[float, float, float]]:
+    """Drop consecutive duplicate (lat,lon) keeping the later timestamp."""
+    if not timed:
+        return []
+    out: List[Tuple[float, float, float]] = [timed[0]]
+    for lat, lon, t in timed[1:]:
+        plat, plon, _ = out[-1]
+        if abs(lat - plat) < 1e-9 and abs(lon - plon) < 1e-9:
+            out[-1] = (lat, lon, max(out[-1][2], t))
+        else:
+            out.append((lat, lon, t))
+    return out
+
+
+def interpolate_latlon_at_time(
+    timed_points: List[Tuple[float, float, float]],
+    t_sec: float,
+) -> Tuple[float, float]:
+    """
+    Piecewise linear interpolation of (lat, lon) over time (seconds along route).
+    """
+    if not timed_points:
+        raise ValueError("empty timed_points")
+    t_sec = max(0.0, min(t_sec, timed_points[-1][2]))
+    if t_sec <= timed_points[0][2]:
+        return timed_points[0][0], timed_points[0][1]
+
+    for i in range(1, len(timed_points)):
+        lat1, lon1, t1 = timed_points[i - 1]
+        lat2, lon2, t2 = timed_points[i]
+        if t_sec <= t2 or i == len(timed_points) - 1:
+            span = t2 - t1
+            if span <= 1e-9:
+                return lat2, lon2
+            u = (t_sec - t1) / span
+            u = max(0.0, min(1.0, u))
+            return lat1 + u * (lat2 - lat1), lon1 + u * (lon2 - lon1)
+    return timed_points[-1][0], timed_points[-1][1]
+
+
+def resample_route_by_driving_time(
+    timed_points: List[Tuple[float, float, float]],
+    interval_minutes: float,
+) -> List[Dict[str, float]]:
+    """
+    Resample a time-tagged polyline so waypoints are evenly spaced in *driving time*
+    (e.g. one point every `interval_minutes`).
+    """
+    if not timed_points:
+        return []
+    if interval_minutes <= 0:
+        interval_minutes = 2.0
+
+    timed_points = sorted(timed_points, key=lambda x: x[2])
+    timed_points = _merge_duplicate_vertices(timed_points)
+
+    max_t = timed_points[-1][2]
+    if max_t <= 0:
+        lat, lon, _ = timed_points[-1]
+        return [{"lat": lat, "lon": lon, "eta_minutes": 0.0}]
+
+    interval_sec = interval_minutes * 60.0
+    targets: List[float] = []
+    t = 0.0
+    while t <= max_t + 1e-6:
+        targets.append(t)
+        t += interval_sec
+
+    if not targets or abs(targets[-1] - max_t) > 1e-2:
+        targets.append(max_t)
+
+    out: List[Dict[str, float]] = []
+    seen = set()
+    for tgt in targets:
+        key = round(tgt, 3)
+        if key in seen and tgt < max_t - 1e-6:
+            continue
+        seen.add(key)
+        lat, lon = interpolate_latlon_at_time(timed_points, tgt)
+        out.append({
+            "lat": float(lat),
+            "lon": float(lon),
+            "eta_minutes": float(tgt / 60.0),
+        })
+    return out
+
+
+def route_waypoints_osrm(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+    eta_spacing_minutes: float = 2.0,
+) -> Optional[List[Dict[str, float]]]:
+    """
+    Full OSRM pipeline: fetch route, decode geometry, assign cumulative time from OSRM
+    durations, resample by driving time. Returns None if routing fails.
+    """
+    data = _fetch_osrm_route_json(start_lat, start_lon, end_lat, end_lon)
+    if not data:
+        return None
+
+    route = data["routes"][0]
+    route_duration_sec = float(route.get("duration", 0.0))
+
+    legs = route.get("legs") or []
+    steps: List[Dict[str, Any]] = []
+    for leg in legs:
+        steps.extend(leg.get("steps") or [])
+
+    if steps:
+        timed = _timed_points_from_steps(steps, route_duration_sec)
+    else:
+        timed = _timed_points_from_route_geometry(route)
+
+    if not timed:
+        return None
+
+    return resample_route_by_driving_time(timed, eta_spacing_minutes)
+
+
+def generate_waypoints_straight_line(
+    start_latlon: Tuple[float, float],
+    end_latlon: Tuple[float, float],
+    spacing_km: float = 2.0,
+) -> List[Dict[str, float]]:
+    """
+    Legacy: great-circle segments at fixed spacing_km with fixed DRIVING_SPEED_KMH.
+    Returns list of dicts with lat, lon, eta_minutes.
     """
     lat1, lon1 = start_latlon
     lat2, lon2 = end_latlon
     total_km = haversine_km(lat1, lon1, lat2, lon2)
 
     if total_km == 0:
-        return [(lat1, lon1, 0)]
+        return [{"lat": lat1, "lon": lon1, "eta_minutes": 0.0}]
 
     num_segments = max(1, int(math.ceil(total_km / spacing_km)))
-    waypoints = []
+    out: List[Dict[str, float]] = []
     for i in range(num_segments + 1):
-        t = i / num_segments          # 0.0 … 1.0 along the route
+        t = i / num_segments
         lat = lat1 + t * (lat2 - lat1)
         lon = lon1 + t * (lon2 - lon1)
         dist_from_start = t * total_km
         eta_mins = (dist_from_start / DRIVING_SPEED_KMH) * 60.0
-        waypoints.append((lat, lon, eta_mins))
+        out.append({"lat": lat, "lon": lon, "eta_minutes": eta_mins})
+    return out
 
-    return waypoints
+
+def generate_route_waypoints_dicts(
+    start_latlon: Tuple[float, float],
+    end_latlon: Tuple[float, float],
+    *,
+    spacing_km: float = 2.0,
+    eta_spacing_minutes: float = 2.0,
+    use_osrm: bool = True,
+) -> List[Dict[str, float]]:
+    """
+    Prefer OSRM road geometry + OSRM durations, resampled every eta_spacing_minutes.
+    On failure, fall back to straight-line waypoints every spacing_km at 40 km/h.
+    """
+    lat1, lon1 = start_latlon
+    lat2, lon2 = end_latlon
+
+    if use_osrm:
+        routed = route_waypoints_osrm(lat1, lon1, lat2, lon2, eta_spacing_minutes=eta_spacing_minutes)
+        if routed is not None:
+            return routed
+        logger.info("OSRM unavailable; using straight-line fallback")
+
+    return generate_waypoints_straight_line(start_latlon, end_latlon, spacing_km=spacing_km)
+
+
+def generate_waypoints(
+    start_latlon,
+    end_latlon,
+    spacing_km=2.0,
+    eta_spacing_minutes: float = 2.0,
+    use_osrm: bool = True,
+):
+    """
+    Generate waypoints between start and end.
+
+    Primary: OSRM driving route with geometry + step durations, resampled every
+    ``eta_spacing_minutes`` of driving time.
+
+    Fallback: evenly spaced along a straight line every ``spacing_km`` at
+    DRIVING_SPEED_KMH (40 km/h) if OSRM fails.
+
+    Returns:
+        list of (lat, lon, eta_mins) tuples (backward compatible with check_route_rain / API).
+    """
+    dicts = generate_route_waypoints_dicts(
+        start_latlon,
+        end_latlon,
+        spacing_km=spacing_km,
+        eta_spacing_minutes=eta_spacing_minutes,
+        use_osrm=use_osrm,
+    )
+    return [(d["lat"], d["lon"], d["eta_minutes"]) for d in dicts]
 
 
 def predict_rain_position(latest_frame_path, dx, dy, minutes_ahead, clutter_mask=None):
@@ -171,7 +542,7 @@ def check_route_rain(waypoints_pixels, dx, dy, latest_frame_path,
     results = []
     for i, (px, py, eta) in enumerate(waypoints_pixels):
         effective_eta = eta + lag_mins
-        
+
         # Buffer: check effective_eta, +5, +10
         check_times = [effective_eta, effective_eta + 5, effective_eta + 10]
         hits = 0
@@ -269,18 +640,19 @@ if __name__ == "__main__":
             print("   Predictions for out-of-bounds waypoints unreliable!")
             print()
 
-        # Generate waypoints
+        # Generate waypoints (OSRM + 2-min spacing, or fallback)
         waypoints_latlon = generate_waypoints(
             route['start'],
             route['end'],
-            spacing_km=2.0
+            spacing_km=2.0,
+            eta_spacing_minutes=2.0,
         )
 
         total_dist = haversine_km(
             route['start'][0], route['start'][1],
             route['end'][0],   route['end'][1]
         )
-        print(f"Distance: {total_dist:.1f} km")
+        print(f"Great-circle distance: {total_dist:.1f} km")
         print(f"Waypoints: {len(waypoints_latlon)}")
         print()
 

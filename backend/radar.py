@@ -1,6 +1,8 @@
 # Garaj Baras - radar.py
 
 import os
+import threading
+import time
 import requests
 from PIL import Image, ImageSequence
 from datetime import datetime, timezone, timedelta
@@ -11,6 +13,51 @@ FRAMES_FOLDER = os.path.join(os.path.dirname(__file__), "frames")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+RADAR_TTL_SEC = 10 * 60  # 10 minutes
+_refresh_lock = threading.Lock()
+
+
+def _gif_age_seconds(gif_path: str) -> float:
+    """
+    Returns file age in seconds, or +inf if missing/unreadable.
+    """
+    try:
+        if not os.path.exists(gif_path):
+            return float("inf")
+        mtime = os.path.getmtime(gif_path)
+        return max(0.0, time.time() - float(mtime))
+    except Exception:
+        return float("inf")
+
+
+def gif_is_fresh(ttl_sec: float = RADAR_TTL_SEC, gif_path: str = GIF_SAVE_PATH) -> bool:
+    """
+    True if gif exists and is newer than ttl_sec.
+    """
+    return _gif_age_seconds(gif_path) < float(ttl_sec)
+
+
+def clear_frames_folder(frames_folder: str = FRAMES_FOLDER) -> int:
+    """
+    Delete all .png images in frames_folder. Returns number deleted.
+    """
+    deleted = 0
+    try:
+        if not os.path.exists(frames_folder):
+            return 0
+        for name in os.listdir(frames_folder):
+            if name.lower().endswith(".png"):
+                fp = os.path.join(frames_folder, name)
+                try:
+                    os.remove(fp)
+                    deleted += 1
+                except Exception:
+                    # Best-effort cleanup: ignore individual delete failures
+                    pass
+    except Exception:
+        return deleted
+    return deleted
+
 
 def download_gif(url, save_path):
     """
@@ -18,8 +65,20 @@ def download_gif(url, save_path):
     Returns (True, None) on success.
     """
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, stream=True)
+        # Cache-bust: some networks/proxies may serve a cached GIF for the bare URL.
+        # IMD servers tolerate a dummy querystring; it helps ensure we get the latest bytes.
+        cache_bust_url = url
+        if "?" in url:
+            cache_bust_url = f"{url}&_={int(time.time())}"
+        else:
+            cache_bust_url = f"{url}?_={int(time.time())}"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+        response = requests.get(cache_bust_url, headers=headers, stream=True, timeout=30)
         response.raise_for_status()
         
         with open(save_path, 'wb') as f:
@@ -33,9 +92,10 @@ def download_gif(url, save_path):
         return False, None
 
 
+# Full IMD frame is 880x720. Crop must match georef.py IMAGE_WIDTH x IMAGE_HEIGHT (527x525).
 CROP_TOP    = 125          # Remove top brown panel
-CROP_RIGHT  = 579          # Remove right info panel
-CROP_BOTTOM = 720          # Crop bottom (full image y)
+CROP_RIGHT  = 527          # left=0 → width 527 (Delhi radar circle, matches georef)
+CROP_BOTTOM = 650          # top=125 → height 525
 
 
 def extract_frames(gif_path, output_folder):
@@ -238,6 +298,48 @@ def get_recent_frames(n=6):
     if len(frame_data) <= n:
         return frame_data
     return frame_data[-n:]
+
+
+def refresh_frames_if_stale(
+    *,
+    ttl_sec: float = RADAR_TTL_SEC,
+    force: bool = False,
+    clear_pngs: bool = True,
+) -> tuple[list[tuple[str, datetime | None]], bool]:
+    """
+    Lazy-cache refresh manager.
+
+    - If delhi_radar.gif is fresh (< ttl_sec) and force=False, does nothing and
+      returns ([], did_refresh=False). Caller should use its in-memory cache.
+    - If stale/missing (or force=True), refreshes:
+        - downloads latest GIF
+        - clears existing frame PNGs (if clear_pngs)
+        - extracts fresh frames + OCR timestamps
+      Returns (frame_data, did_refresh=True).
+
+    Concurrency safety:
+      Uses a process-local lock so only one request refreshes at a time.
+    """
+    if not force and gif_is_fresh(ttl_sec=ttl_sec, gif_path=GIF_SAVE_PATH):
+        return ([], False)
+
+    with _refresh_lock:
+        # Re-check inside lock to avoid double refresh
+        if not force and gif_is_fresh(ttl_sec=ttl_sec, gif_path=GIF_SAVE_PATH):
+            return ([], False)
+
+        success, _ = download_gif(GIF_URL, GIF_SAVE_PATH)
+        if not success:
+            print("Failed to download radar GIF.")
+            return ([], False)
+
+        if clear_pngs:
+            deleted = clear_frames_folder(FRAMES_FOLDER)
+            if deleted:
+                print(f"Cleared {deleted} old frame PNGs")
+
+        frame_data = extract_frames(GIF_SAVE_PATH, FRAMES_FOLDER)
+        return (frame_data, True)
 
 
 def extract_timestamp_from_gif():
