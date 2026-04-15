@@ -611,6 +611,9 @@ export default function App() {
             <div className="welcomeText">
               Currently serving in Delhi-NCR and nearby locations.
             </div>
+            <div className="welcomeDisclaimer">
+              Sorry for inconvenience — it might take 2–3 attempts to properly load the website.
+            </div>
             <button
               type="button"
               className="welcomeBtn"

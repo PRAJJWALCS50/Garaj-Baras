@@ -405,6 +405,14 @@
   font-size: 14px;
 }
 
+.welcomeDisclaimer {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(136, 150, 179, 0.95);
+  font-weight: 650;
+}
+
 .welcomeBtn {
   margin-top: 14px;
   width: 100%;
