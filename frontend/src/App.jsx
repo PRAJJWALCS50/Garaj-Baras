@@ -1,13 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
-import L from 'leaflet'
-import {
-  MapContainer,
-  Popup,
-  Polyline,
-  TileLayer,
-} from 'react-leaflet'
-import 'leaflet/dist/leaflet.css'
 import './App.css'
 
 const API_BASE =
@@ -16,10 +8,11 @@ const PREDICT_WAYPOINTS_URL = `${API_BASE}/predict_waypoints`
 
 const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search'
 const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse'
-const NOMINATIM_USER_AGENT = 'GarajBaras/1.0'
 
 const ORS_KEY = import.meta.env.VITE_ORS_API_KEY
 const THUNDER_SOUND_URL = '/mixkit-thunder-deep-rumble-1296.wav'
+
+const RouteMap = lazy(() => import('./RouteMap.jsx'))
 
 // Rough Delhi NCR bounding box (tune anytime): left,top,right,bottom (lon,lat,lon,lat)
 const NCR_VIEWBOX = '76.5,29.7,78.9,28.0'
@@ -70,22 +63,16 @@ async function geocode(place) {
     q
   )}&format=json&limit=1&countrycodes=in`
 
-  try {
-    const res = await axios.get(url, {
-      timeout: 15000,
-      headers: { 'User-Agent': NOMINATIM_USER_AGENT, Accept: 'application/json' },
-    })
-    const data = Array.isArray(res.data) ? res.data[0] : null
-    if (!data?.lat || !data?.lon) throw new Error('No geocoding results.')
-    return { lat: parseFloat(data.lat), lon: parseFloat(data.lon), display_name: data.display_name }
-  } catch (e) {
-    const res2 = await axios.get(url, {
-      timeout: 15000,
-      headers: { Accept: 'application/json' },
-    })
-    const data2 = Array.isArray(res2.data) ? res2.data[0] : null
-    if (!data2?.lat || !data2?.lon) throw new Error('No geocoding results.')
-    return { lat: parseFloat(data2.lat), lon: parseFloat(data2.lon), display_name: data2.display_name }
+  const res = await axios.get(url, {
+    timeout: 15000,
+    headers: { Accept: 'application/json' },
+  })
+  const data = Array.isArray(res.data) ? res.data[0] : null
+  if (!data?.lat || !data?.lon) throw new Error('No geocoding results.')
+  return {
+    lat: parseFloat(data.lat),
+    lon: parseFloat(data.lon),
+    display_name: data.display_name,
   }
 }
 
@@ -105,7 +92,7 @@ async function searchPlaces(query, signal) {
       viewbox: NCR_VIEWBOX,
       countrycodes: 'in',
     },
-    headers: { 'User-Agent': NOMINATIM_USER_AGENT, Accept: 'application/json' },
+    headers: { Accept: 'application/json' },
   })
 
   const arr = Array.isArray(res.data) ? res.data : []
@@ -132,7 +119,7 @@ async function reversePlaceName(lat, lon, signal) {
       zoom: 16,
       addressdetails: 1,
     },
-    headers: { 'User-Agent': NOMINATIM_USER_AGENT, Accept: 'application/json' },
+    headers: { Accept: 'application/json' },
   })
   const name = res.data?.display_name
   return typeof name === 'string' && name.trim() ? name.trim() : null
@@ -306,7 +293,6 @@ export default function App() {
   const [activeSeg, setActiveSeg] = useState(null) // {lat,lon,label,dbz,eta_mins,rain_expected,inBounds,locationName}
   const [routeDistanceKm, setRouteDistanceKm] = useState(null)
   const [error, setError] = useState(null)
-  const [mapRef, setMapRef] = useState(null)
 
   const reverseAbortRef = useRef(null)
   const reverseCacheRef = useRef(new Map())
@@ -321,7 +307,8 @@ export default function App() {
     if (!Number.isFinite(Number(rainWaypointsCount)) || Number(rainWaypointsCount) <= 0) return
     if (!thunderAudioRef.current) {
       thunderAudioRef.current = new Audio(THUNDER_SOUND_URL)
-      thunderAudioRef.current.preload = 'auto'
+      // Avoid fetching a 3.2MB asset during initial load; download only when needed.
+      thunderAudioRef.current.preload = 'none'
     }
     const audio = thunderAudioRef.current
     audio.currentTime = 0
@@ -564,31 +551,6 @@ export default function App() {
     : Number.isFinite(Number(result?.route_distance_km))
       ? Number(result.route_distance_km)
       : null
-  const midpoint = routeCoords.length
-    ? routeCoords[Math.floor(routeCoords.length / 2)]
-    : [26.7606, 80.8893]
-
-  const routeBounds = useMemo(() => {
-    if (!routeCoords || routeCoords.length < 2) return null
-    return L.latLngBounds(routeCoords)
-  }, [routeCoords])
-
-  useEffect(() => {
-    if (!mapRef || !routeBounds || !routeBounds.isValid()) return
-    // Leaflet sometimes computes a too-wide zoom on first render because the container
-    // hasn't finalized layout yet. Invalidate + refit fixes the initial view.
-    const doFit = () => {
-      mapRef.invalidateSize()
-      mapRef.fitBounds(routeBounds, {
-        padding: [10, 10],
-        maxZoom: 17,
-        animate: true,
-      })
-    }
-    doFit()
-    const t = setTimeout(doFit, 120)
-    return () => clearTimeout(t)
-  }, [mapRef, routeBounds])
 
   function handleBackToPlanner() {
     setResult(null)
@@ -838,97 +800,23 @@ export default function App() {
               </div>
 
               {/* Map */}
-              <div className="map-container">
-                <MapContainer
-                  center={midpoint}
-                  zoom={9}
-                  style={{ height: '320px', width: '100%' }}
-                  zoomControl
-                  scrollWheelZoom
-                  whenCreated={(map) => {
-                    setMapRef(map)
-                    if (routeBounds && routeBounds.isValid()) {
-                      map.fitBounds(routeBounds, {
-                        padding: [10, 10],
-                        maxZoom: 17,
-                        animate: true,
-                      })
-                    }
-                  }}
-                >
-                  <TileLayer
-                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                    attribution="CartoDB"
-                  />
-
-                  {routeCoords.length > 0 && (
-                    <Polyline
-                      positions={routeCoords}
-                      color="#0EA5E9"
-                      weight={5}
-                      opacity={0.35}
-                    />
-                  )}
-
-                  {Array.isArray(routeSegments) &&
-                    routeSegments.map((seg, idx) => (
-                      <Polyline
-                        key={`seg-${idx}`}
-                        positions={seg.positions}
-                        color={seg.color}
-                        weight={7}
-                        opacity={0.92}
-                        eventHandlers={{
-                          click: () => openSegmentPopup(seg),
-                        }}
-                      />
-                    ))}
-
-                  {activeSeg?.mid && (
-                    <Popup
-                      position={[activeSeg.mid.lat, activeSeg.mid.lon]}
-                      closeButton
-                      autoClose
-                      closeOnEscapeKey
-                      eventHandlers={{
-                        remove: () => setActiveSeg(null),
-                      }}
-                    >
-                      <div style={{ minWidth: 220 }}>
-                        <div style={{ fontWeight: 900, marginBottom: 6 }}>
-                          {activeSeg.locationName || 'Selected location'}
-                        </div>
-                        <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
-                          {activeSeg.mid.lat.toFixed(4)}, {activeSeg.mid.lon.toFixed(4)}
-                        </div>
-                        <div style={{ fontWeight: 800 }}>
-                          {activeSeg.inBounds ? activeSeg.label : 'Unknown (out of radar)'}
-                        </div>
-                        <div style={{ fontSize: 12, marginTop: 6 }}>
-                          Rain: {activeSeg.rain_expected ? 'Yes' : 'No'}
-                          {activeSeg.eta_mins != null ? ` • ETA ~${Math.round(Number(activeSeg.eta_mins))} min` : ''}
-                          {activeSeg.dbz != null ? ` • dBZ ${Math.round(Number(activeSeg.dbz))}` : ''}
-                        </div>
-                      </div>
-                    </Popup>
-                  )}
-                </MapContainer>
-                <button
-                  type="button"
-                  className="zoomRouteBtn"
-                  onClick={() => {
-                    if (mapRef && routeBounds && routeBounds.isValid()) {
-                      mapRef.fitBounds(routeBounds, {
-                        padding: [10, 10],
-                        maxZoom: 17,
-                        animate: true,
-                      })
-                    }
-                  }}
-                >
-                  Zoom to route
-                </button>
-              </div>
+              <Suspense
+                fallback={
+                  <div className="map-container">
+                    <div style={{ height: 320, display: 'grid', placeItems: 'center' }}>
+                      Loading map…
+                    </div>
+                  </div>
+                }
+              >
+                <RouteMap
+                  routeCoords={routeCoords}
+                  routeSegments={routeSegments}
+                  activeSeg={activeSeg}
+                  setActiveSeg={setActiveSeg}
+                  openSegmentPopup={openSegmentPopup}
+                />
+              </Suspense>
 
               <div className="legendWrap">
                 <div className="legendTitle">Reflectivity (dBZ)</div>
