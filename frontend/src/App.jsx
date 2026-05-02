@@ -1008,14 +1008,6 @@ export default function App() {
                     )
                   })()}
                 </div>
-                <div className="statBox">
-                  <div className="statLabel">Rain Speed</div>
-                  <div className="statValue">
-                    {result._pending
-                      ? '—'
-                      : `${Number(result.rain_speed_kmh).toFixed(1)} km/h`}
-                  </div>
-                </div>
               </div>
 
               <div className="directionRow">
