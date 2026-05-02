@@ -127,13 +127,27 @@ def extract_frames(gif_path, output_folder):
         except Exception:
             ocr_available = False
 
+        # Perf: OCR is expensive (~hundreds of ms per frame). We only need the
+        # LAST frame's timestamp — the post-processing loop below extrapolates
+        # the rest at ~10-min cadence. So collect the frame count first, then
+        # OCR only on index == total-1.
+        with Image.open(gif_path) as im_count:
+            try:
+                total_frames = getattr(im_count, "n_frames", None)
+            except Exception:
+                total_frames = None
+            if not total_frames:
+                total_frames = sum(1 for _ in ImageSequence.Iterator(im_count))
+
         with Image.open(gif_path) as im:
             for i, frame in enumerate(ImageSequence.Iterator(im)):
                 full = frame.convert('RGB')
 
-                # OCR timestamp from exact location in the FULL 880x720 frame.
+                # OCR timestamp only on the LAST frame; earlier timestamps are
+                # filled in by the 10-min cadence repair loop below.
                 timestamp = None
-                if ocr_available and pytesseract is not None:
+                is_last_frame = (i == total_frames - 1)
+                if is_last_frame and ocr_available and pytesseract is not None:
                     try:
                         from PIL import ImageEnhance
 

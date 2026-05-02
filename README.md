@@ -13,7 +13,7 @@ Users enter a **starting point**, **destination**, and **average speed**. The ap
   - extracts frames and estimates rain movement from the **latest frames**
   - predicts if rain will intersect each waypoint at its ETA
 - **Route visualization**: route segments are colored by intensity; out-of-radar segments show as **Unknown (gray)**.
-- **Effects**: welcome popup (serving area notice) + thunder sound when rain is detected on the route.
+- **Effects**: welcome popup (serving area notice).
 
 ## Tech stack
 
@@ -21,7 +21,6 @@ Users enter a **starting point**, **destination**, and **average speed**. The ap
 - **React** (Vite)
 - **Leaflet + react-leaflet** for map rendering and interactive polylines
 - **Axios** for API calls (backend + Nominatim + ORS)
-- Static asset serving for thunder audio (`frontend/public/mixkit-thunder-deep-rumble-1296.wav`)
 
 Key files:
 - `frontend/src/App.jsx`

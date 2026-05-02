@@ -9,6 +9,9 @@ import time
 import threading
 import traceback
 
+import numpy as np  # type: ignore
+from PIL import Image  # type: ignore
+
 from radar import (
     get_recent_frames,
     get_all_frames,
@@ -17,7 +20,7 @@ from radar import (
     GIF_SAVE_PATH,
     RADAR_TTL_SEC,
 )  # type: ignore
-from optical_flow import get_movement_vector, build_clutter_mask  # type: ignore
+from optical_flow import get_movement_vector, build_clutter_mask, isolate_rain  # type: ignore
 from prediction import (generate_waypoints, check_route_rain,   # type: ignore
                         haversine_km)
 from georef import latlon_to_pixel, is_within_radar  # type: ignore
@@ -28,6 +31,23 @@ app = FastAPI(
     description="Rain prediction for Delhi NCR routes",
     version="1.0.0"
 )
+
+
+@app.on_event("startup")
+def _warm_radar_cache_on_startup():
+    """
+    Kick radar cache warm-up in the background at server boot so the very first
+    /predict_waypoints call doesn't pay the full download + OCR + optical-flow
+    cost (which on Render free tier compounds with cold-start latency).
+    """
+    def _worker():
+        try:
+            _load_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
+            print("Radar cache warmed at startup.")
+        except Exception as e:
+            print(f"Startup radar warm-up failed (non-fatal): {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 # Serve extracted radar PNGs (and allow clients to fetch them)
 try:
@@ -143,8 +163,11 @@ def _load_radar_state(ttl_sec: float = RADAR_CACHE_TTL_SEC, *, force: bool = Fal
         else:
             # If GIF is fresh but we don't have in-memory cache (e.g. server restart),
             # do a *no-download* extract from the existing GIF once.
-            # (This is still processing, but it honors the “don’t download” requirement.)
-            from radar import extract_frames, FRAMES_FOLDER, GIF_SAVE_PATH  # type: ignore
+            # NOTE: we import FRAMES_FOLDER locally but DO NOT rebind GIF_SAVE_PATH here —
+            # importing it inside this function body would make Python treat GIF_SAVE_PATH
+            # as a local for the whole function and raise UnboundLocalError when the
+            # branch above (`did_refresh=True`) runs instead.
+            from radar import extract_frames, FRAMES_FOLDER  # type: ignore
             all_frame_data = extract_frames(GIF_SAVE_PATH, FRAMES_FOLDER) if gif_fresh else get_all_frames()
 
         recent_frame_data = all_frame_data[-6:] if len(all_frame_data) > 6 else all_frame_data
@@ -302,6 +325,20 @@ def predict_waypoints(payload: PredictWaypointsRequest):
         latest_frame = state["latest_frame"]
         lag_info = state["lag_info"]
 
+        # Per-request shared work: open the latest frame + compute base rain
+        # mask exactly ONCE and pass them into both check_route_rain and
+        # enrich_results. Previously both helpers re-opened the PIL image,
+        # and predict_rain_position re-ran isolate_rain for every time offset.
+        frame_rgb = None
+        base_rain_mask = None
+        try:
+            if latest_frame is not None:
+                frame_rgb = np.array(Image.open(latest_frame).convert('RGB'))
+                base_rain_mask = isolate_rain(latest_frame, clutter_mask=clutter_mask)
+        except Exception:
+            frame_rgb = None
+            base_rain_mask = None
+
         # Convert to pixels and build (lat,lon,eta) tuples for enrichment
         waypoints_pixels = []
         waypoints_latlon = []
@@ -320,6 +357,8 @@ def predict_waypoints(payload: PredictWaypointsRequest):
             eta_minutes=max_eta,
             clutter_mask=clutter_mask,
             lag_mins=lag_info["lag_mins"],
+            frame_rgb=frame_rgb,
+            base_rain_mask=base_rain_mask,
         )
 
         enriched = enrich_results(
@@ -329,6 +368,7 @@ def predict_waypoints(payload: PredictWaypointsRequest):
             dx,
             dy,
             lag_info=lag_info,
+            frame_rgb=frame_rgb,
         )
 
         for e in enriched:
@@ -390,6 +430,17 @@ def predict_rain(route: RouteRequest):
         latest_frame = state["latest_frame"]
         lag_info = state["lag_info"]
 
+        # Pre-load frame RGB + base rain mask once (see /predict_waypoints)
+        frame_rgb = None
+        base_rain_mask = None
+        try:
+            if latest_frame is not None:
+                frame_rgb = np.array(Image.open(latest_frame).convert('RGB'))
+                base_rain_mask = isolate_rain(latest_frame, clutter_mask=clutter_mask)
+        except Exception:
+            frame_rgb = None
+            base_rain_mask = None
+
         # Generate waypoints
         waypoints_latlon = generate_waypoints(
             (route.start_lat, route.start_lon),
@@ -417,14 +468,17 @@ def predict_rain(route: RouteRequest):
             latest_frame,
             eta_minutes=max_eta,
             clutter_mask=clutter_mask,
-            lag_mins=lag_info["lag_mins"]
+            lag_mins=lag_info["lag_mins"],
+            frame_rgb=frame_rgb,
+            base_rain_mask=base_rain_mask,
         )
 
         # Enrich with fuzzy intensity
         enriched = enrich_results(
             results, waypoints_latlon,
             latest_frame, dx, dy,
-            lag_info=lag_info
+            lag_info=lag_info,
+            frame_rgb=frame_rgb,
         )
 
         # Add bounds check to each waypoint

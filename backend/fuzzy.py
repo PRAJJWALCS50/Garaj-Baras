@@ -53,13 +53,16 @@ def get_pixel_intensity(frame_path, px, py):
     }
 
 def enrich_results(results, waypoints_latlon, 
-                   latest_frame, dx, dy, lag_info=None):
+                   latest_frame, dx, dy, lag_info=None, frame_rgb=None):
     from PIL import Image
     import numpy as np
 
     enriched = []
-    img = Image.open(latest_frame).convert('RGB')
-    arr = np.array(img)
+    if frame_rgb is not None:
+        arr = frame_rgb
+    else:
+        img = Image.open(latest_frame).convert('RGB')
+        arr = np.array(img)
 
     lag_mins = lag_info['lag_mins'] if lag_info else 25.0
 

@@ -10,9 +10,45 @@ const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search'
 const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse'
 
 const ORS_KEY = import.meta.env.VITE_ORS_API_KEY
-const THUNDER_SOUND_URL = '/mixkit-thunder-deep-rumble-1296.wav'
 
 const RouteMap = lazy(() => import('./RouteMap.jsx'))
+
+// Wake the backend (Render free tier sleeps after ~15 min). Fire-and-forget.
+function warmBackend() {
+  try {
+    axios.get(`${API_BASE}/health`, { timeout: 90000 }).catch(() => {})
+  } catch {
+    // ignore
+  }
+}
+
+// Retry with exponential backoff on network/timeout/5xx. Render free-tier
+// cold-starts can take 30–60s, so we quietly retry up to 4 times before
+// surfacing an error to the user.
+async function postWithRetry(url, body, config = {}, onAttempt = null) {
+  const backoffsMs = [0, 3000, 7000, 15000]
+  let lastErr = null
+  for (let attempt = 0; attempt < backoffsMs.length; attempt++) {
+    if (backoffsMs[attempt] > 0) {
+      await new Promise((r) => setTimeout(r, backoffsMs[attempt]))
+    }
+    if (typeof onAttempt === 'function') {
+      try { onAttempt(attempt + 1, backoffsMs.length) } catch {}
+    }
+    try {
+      return await axios.post(url, body, config)
+    } catch (err) {
+      lastErr = err
+      const status = err?.response?.status
+      const isTimeout = err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '')
+      const isServerErr = status && status >= 500
+      const isNetwork = !status && !err?.response
+      // Only retry on transient errors; surface anything else immediately.
+      if (!(isTimeout || isServerErr || isNetwork)) throw err
+    }
+  }
+  throw lastErr
+}
 
 // Rough Delhi NCR bounding box (tune anytime): left,top,right,bottom (lon,lat,lon,lat)
 const NCR_VIEWBOX = '76.5,29.7,78.9,28.0'
@@ -287,6 +323,8 @@ export default function App() {
   const destAbortRef = useRef(null)
 
   const [loading, setLoading] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanStatus, setScanStatus] = useState('')
   const [result, setResult] = useState(null)
   const [routeCoords, setRouteCoords] = useState([]) // [lat, lon] full road polyline
   const [routeSegments, setRouteSegments] = useState([]) // colored line segments
@@ -296,37 +334,18 @@ export default function App() {
 
   const reverseAbortRef = useRef(null)
   const reverseCacheRef = useRef(new Map())
-  const thunderAudioRef = useRef(null)
 
   const routeName = useMemo(
     () => toCityRouteName(source, destination),
     [source, destination]
   )
 
-  function playThunderIfNeeded(rainWaypointsCount) {
-    if (!Number.isFinite(Number(rainWaypointsCount)) || Number(rainWaypointsCount) <= 0) return
-    if (!thunderAudioRef.current) {
-      thunderAudioRef.current = new Audio(THUNDER_SOUND_URL)
-      // Avoid fetching a 3.2MB asset during initial load; download only when needed.
-      thunderAudioRef.current.preload = 'none'
-    }
-    const audio = thunderAudioRef.current
-    audio.currentTime = 0
-    audio.volume = 1.0
-    audio.loop = false
-    // Play only the first ~6 seconds as requested.
-    const onTimeUpdate = () => {
-      if (audio.currentTime >= 6) {
-        audio.pause()
-        audio.currentTime = 0
-        audio.removeEventListener('timeupdate', onTimeUpdate)
-      }
-    }
-    audio.addEventListener('timeupdate', onTimeUpdate)
-    audio.play().catch(() => {
-      audio.removeEventListener('timeupdate', onTimeUpdate)
-    })
-  }
+  // Warm the backend once on mount so the first click doesn't pay the
+  // Render free-tier cold-start cost (which was causing the "open-after-a-while"
+  // timeouts that the welcome popup alludes to).
+  useEffect(() => {
+    warmBackend()
+  }, [])
 
   // Autocomplete: Source
   useEffect(() => {
@@ -408,13 +427,18 @@ export default function App() {
     setRouteCoords([])
     setRouteSegments([])
     setRouteDistanceKm(null)
+    setScanning(false)
+    setScanStatus('')
+
+    // Kick a health ping in parallel to wake Render (harmless if already warm).
+    warmBackend()
 
     try {
-      // If user typed but didn't pick from dropdown, fall back to text-geocode.
-      // (We don't hard-require dropdown selection.)
-      // 1) Geocode
-      const start = sourcePlace || (await geocode(startCity))
-      const end = destPlace || (await geocode(endCity))
+      // 1) Geocode source + destination in parallel (saves ~200-1000ms).
+      const [start, end] = await Promise.all([
+        sourcePlace ? Promise.resolve(sourcePlace) : geocode(startCity),
+        destPlace ? Promise.resolve(destPlace) : geocode(endCity),
+      ])
 
       // 2) Get road route from ORS
       let routeLonLat = null
@@ -430,7 +454,7 @@ export default function App() {
             radiuses: [5000, 5000],
           },
           {
-            timeout: 60000,
+            timeout: 90000,
             headers: {
               Authorization: ORS_KEY,
               'Content-Type': 'application/json',
@@ -461,26 +485,54 @@ export default function App() {
       setRouteDistanceKm(totalKm)
 
       // 3) Sample waypoints every 5 minutes by constant avg speed
-      const sampled = sampleRouteEvery5Min(routeLonLat, speedNum, 5) // [{lat,lon,eta_mins,cumKm}, ...]
+      const sampled = sampleRouteEvery5Min(routeLonLat, speedNum, 5)
       if (!sampled.length) {
         throw new Error('Could not sample route into waypoints. Try a different route or speed.')
       }
 
-      // 4) Prepare map polyline (full road)
+      // 4) PHASE 2 — show the map + route polyline immediately, then scan radar
+      // in the background so the user doesn't stare at a blank spinner.
       const polylineLatLon = routeLonLat.map(([lon, lat]) => [lat, lon])
       setRouteCoords(polylineLatLon)
+      setResult({
+        total_waypoints: sampled.length,
+        rain_waypoints: 0,
+        clear_waypoints: sampled.length,
+        first_rain_eta: null,
+        first_rain_label: null,
+        rain_direction_from: '—',
+        rain_direction_to: '—',
+        rain_speed_kmh: 0,
+        radar_lag_mins: null,
+        radar_freshness: 'pending',
+        radar_message: 'Scanning radar…',
+        route_distance_km: totalKm,
+        waypoints: [],
+        _pending: true,
+      })
+      setLoading(false)
+      setScanning(true)
 
-      // 5) Call predict-waypoints API (ETA driven by frontend; for now approximate from distance/speed)
+      // 5) PHASE 3 — call predict-waypoints API (retry once on cold-start).
       const cumWaypoints = sampled.map(({ lat, lon, eta_mins }) => ({
         lat,
         lon,
         eta_mins,
       }))
 
-      const predictRes = await axios.post(
+      const predictRes = await postWithRetry(
         PREDICT_WAYPOINTS_URL,
         { waypoints: cumWaypoints },
-        { timeout: 90000 }
+        { timeout: 90000 },
+        (attempt, total) => {
+          if (attempt === 1) {
+            setScanStatus('Scanning radar…')
+          } else {
+            setScanStatus(
+              `Waking up server — attempt ${attempt} of ${total} (first load can take up to a minute)`
+            )
+          }
+        }
       )
 
       const predictWaypoints = Array.isArray(predictRes.data?.waypoints)
@@ -495,7 +547,6 @@ export default function App() {
 
       const segments = buildColoredSegments(routeLonLat, mergedWaypoints)
       setRouteSegments(segments)
-      playThunderIfNeeded(predictRes.data?.rain_waypoints)
 
       setResult({
         ...predictRes.data,
@@ -508,12 +559,26 @@ export default function App() {
         e?.response?.data?.detail ||
         e?.response?.data?.error?.message ||
         e?.response?.data?.message
-      const msg = status
-        ? `Request failed (${status}): ${detail || e?.message || 'Unknown error'}`
-        : e?.message || 'Something went wrong while scanning the radar.'
+      const isTimeout = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')
+      const isNetwork = !status && !e?.response
+      let msg
+      if (isTimeout || isNetwork) {
+        msg = "Couldn't reach the radar server. It may still be waking up — please try again in a minute."
+      } else {
+        msg = status
+          ? `Request failed (${status}): ${detail || e?.message || 'Unknown error'}`
+          : e?.message || 'Something went wrong while scanning the radar.'
+      }
       setError(typeof msg === 'string' ? msg : 'Something went wrong.')
+      // Roll back the optimistic Phase-2 result so we return to the planner.
+      setResult(null)
+      setRouteCoords([])
+      setRouteSegments([])
+      setRouteDistanceKm(null)
     } finally {
       setLoading(false)
+      setScanning(false)
+      setScanStatus('')
     }
   }
 
@@ -751,10 +816,14 @@ export default function App() {
               <div className="summaryTop">
                 <div
                   className={`rainBadge ${
-                    hasRain ? 'rainBadge--rain' : 'rainBadge--clear'
+                    result._pending
+                      ? 'rainBadge--clear'
+                      : hasRain
+                        ? 'rainBadge--rain'
+                        : 'rainBadge--clear'
                   }`}
                 >
-                  {hasRain ? 'Rain' : 'Clear'}
+                  {result._pending ? 'Scanning…' : hasRain ? 'Rain' : 'Clear'}
                 </div>
 
                 <button
@@ -776,15 +845,19 @@ export default function App() {
                 <div className="statBox">
                   <div className="statLabel">First Rain ETA</div>
                   <div className="statValue">
-                    {result.first_rain_eta == null
-                      ? 'N/A'
-                      : `${Math.round(result.first_rain_eta)} mins`}
+                    {result._pending
+                      ? '—'
+                      : result.first_rain_eta == null
+                        ? 'N/A'
+                        : `${Math.round(result.first_rain_eta)} mins`}
                   </div>
                 </div>
                 <div className="statBox">
                   <div className="statLabel">Rain Speed</div>
                   <div className="statValue">
-                    {Number(result.rain_speed_kmh).toFixed(1)} km/h
+                    {result._pending
+                      ? '—'
+                      : `${Number(result.rain_speed_kmh).toFixed(1)} km/h`}
                   </div>
                 </div>
               </div>
@@ -795,28 +868,67 @@ export default function App() {
                     Rain direction: {result.rain_direction_from} -&gt;{' '}
                     {result.rain_direction_to}
                   </div>
-                  <div className="directionSub">{result.radar_freshness}</div>
+                  <div className="directionSub">
+                    {result._pending ? 'Scanning radar…' : result.radar_freshness}
+                  </div>
                 </div>
               </div>
 
-              {/* Map */}
-              <Suspense
-                fallback={
-                  <div className="map-container">
-                    <div style={{ height: 320, display: 'grid', placeItems: 'center' }}>
-                      Loading map…
+              {/* Map (rendered as soon as the route polyline is ready,
+                  even before the rain predict response lands) */}
+              <div style={{ position: 'relative' }}>
+                <Suspense
+                  fallback={
+                    <div className="map-container">
+                      <div style={{ height: 320, display: 'grid', placeItems: 'center' }}>
+                        Loading map…
+                      </div>
+                    </div>
+                  }
+                >
+                  <RouteMap
+                    routeCoords={routeCoords}
+                    routeSegments={routeSegments}
+                    activeSeg={activeSeg}
+                    setActiveSeg={setActiveSeg}
+                    openSegmentPopup={openSegmentPopup}
+                  />
+                </Suspense>
+                {scanning && (
+                  <div
+                    className="scanOverlay"
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'grid',
+                      placeItems: 'center',
+                      background: 'rgba(8, 12, 24, 0.55)',
+                      backdropFilter: 'blur(2px)',
+                      borderRadius: 12,
+                      pointerEvents: 'none',
+                      zIndex: 500,
+                      padding: 16,
+                      textAlign: 'center',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span className="spinner" aria-hidden="true" />
+                        <span style={{ fontWeight: 800, letterSpacing: 1 }}>
+                          SCANNING RADAR…
+                        </span>
+                      </div>
+                      {scanStatus && scanStatus !== 'Scanning radar…' && (
+                        <div style={{ fontSize: 12, opacity: 0.85, maxWidth: 320 }}>
+                          {scanStatus}
+                        </div>
+                      )}
                     </div>
                   </div>
-                }
-              >
-                <RouteMap
-                  routeCoords={routeCoords}
-                  routeSegments={routeSegments}
-                  activeSeg={activeSeg}
-                  setActiveSeg={setActiveSeg}
-                  openSegmentPopup={openSegmentPopup}
-                />
-              </Suspense>
+                )}
+              </div>
 
               <div className="legendWrap">
                 <div className="legendTitle">Reflectivity (dBZ)</div>

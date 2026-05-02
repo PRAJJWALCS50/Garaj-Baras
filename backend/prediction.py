@@ -456,7 +456,8 @@ def generate_waypoints(
     return [(d["lat"], d["lon"], d["eta_minutes"]) for d in dicts]
 
 
-def predict_rain_position(latest_frame_path, dx, dy, minutes_ahead, clutter_mask=None):
+def predict_rain_position(latest_frame_path, dx, dy, minutes_ahead,
+                          clutter_mask=None, base_rain_mask=None):
     """
     Predicts where rain will be after minutes_ahead minutes.
 
@@ -464,9 +465,17 @@ def predict_rain_position(latest_frame_path, dx, dy, minutes_ahead, clutter_mask
     Each 10-minute frame corresponds to one (dx, dy) movement unit.
     Clutter pixels are removed before shifting if clutter_mask is provided.
 
+    For per-request perf: if ``base_rain_mask`` is supplied we skip
+    ``isolate_rain`` (which re-opens the PIL image). The caller is expected
+    to compute the base mask once and pass it for every time offset.
+
     Returns: predicted rain mask (numpy array, uint8, 0=no rain, 255=rain)
     """
-    rain_mask = isolate_rain(latest_frame_path, clutter_mask=clutter_mask).astype(np.float32)
+    if base_rain_mask is None:
+        rain_mask = isolate_rain(latest_frame_path, clutter_mask=clutter_mask)
+    else:
+        rain_mask = base_rain_mask
+    rain_mask = rain_mask.astype(np.float32)
 
     frames_ahead = minutes_ahead / 10.0
     shift_x = dx * frames_ahead
@@ -506,7 +515,8 @@ def is_rain_at_pixel(predicted_mask, px, py, radius=1):
 
 
 def check_route_rain(waypoints_pixels, dx, dy, latest_frame_path,
-                     eta_minutes, clutter_mask=None, lag_mins=25.0):
+                     eta_minutes, clutter_mask=None, lag_mins=25.0,
+                     frame_rgb=None, base_rain_mask=None):
     """
     Checks each waypoint on a route for expected rain at its ETA,
     adjusted for radar lag.
@@ -518,10 +528,18 @@ def check_route_rain(waypoints_pixels, dx, dy, latest_frame_path,
         eta_minutes        : total trip duration (kept for API clarity)
         clutter_mask       : optional clutter mask to clean predictions
         lag_mins           : minutes elapsed since the radar frame was last updated
+        frame_rgb          : optional pre-loaded RGB numpy array of the latest frame
+                             (avoids re-opening the PIL image)
+        base_rain_mask     : optional pre-computed rain mask for latest_frame
+                             (avoids re-running ``isolate_rain`` per time offset)
 
     For each waypoint, checks rain at (effective_eta), (effective_eta+5),
     and (effective_eta+10) minutes.
     """
+    # Compute base rain mask ONCE per request; all time offsets reuse it.
+    if base_rain_mask is None:
+        base_rain_mask = isolate_rain(latest_frame_path, clutter_mask=clutter_mask)
+
     mask_cache = {}
 
     def get_mask(t_mins):
@@ -529,15 +547,20 @@ def check_route_rain(waypoints_pixels, dx, dy, latest_frame_path,
         t = int(max(0, round(t_mins)))
         if t not in mask_cache:
             mask_cache[t] = predict_rain_position(
-                latest_frame_path, dx, dy, t, clutter_mask=clutter_mask
+                latest_frame_path, dx, dy, t,
+                clutter_mask=clutter_mask,
+                base_rain_mask=base_rain_mask,
             )
         return mask_cache[t]
 
     # Load latest frame to check if waypoints start as green/background
-    try:
-        img_arr = np.array(Image.open(latest_frame_path).convert('RGB'))
-    except Exception:
-        img_arr = None
+    if frame_rgb is not None:
+        img_arr = frame_rgb
+    else:
+        try:
+            img_arr = np.array(Image.open(latest_frame_path).convert('RGB'))
+        except Exception:
+            img_arr = None
 
     results = []
     for i, (px, py, eta) in enumerate(waypoints_pixels):
