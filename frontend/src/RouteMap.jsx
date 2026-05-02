@@ -112,6 +112,14 @@ export default function RouteMap({
                   ? ` • dBZ ${Math.round(Number(activeSeg.dbz))}`
                   : ''}
               </div>
+              {activeSeg.cloud_cover_pct != null && (
+                <div style={{ fontSize: 12, marginTop: 4, opacity: 0.85 }}>
+                  Cloud cover: {Math.round(Number(activeSeg.cloud_cover_pct))}%
+                  {activeSeg.cloud_override
+                    ? ' (IMD rain flag dropped — skies clear)'
+                    : ''}
+                </div>
+              )}
             </div>
           </Popup>
         )}
