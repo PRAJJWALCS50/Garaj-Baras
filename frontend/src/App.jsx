@@ -73,6 +73,89 @@ function getRainGroupLabel(label) {
   return 'Clear'
 }
 
+// Collapse a sorted list of waypoints into contiguous rain patches and
+// produce a human-friendly summary focused on the patch CLOSEST to the user.
+//
+// Returns: { tone, headline, secondary, patches, closest, lastEta } or null.
+function computeRainTimeline(waypoints) {
+  if (!Array.isArray(waypoints) || !waypoints.length) return null
+
+  const sorted = waypoints
+    .filter((w) => w && Number.isFinite(Number(w.eta_mins)))
+    .slice()
+    .sort((a, b) => Number(a.eta_mins) - Number(b.eta_mins))
+  if (!sorted.length) return null
+
+  const patches = []
+  let start = null
+  let last = null
+  for (const wp of sorted) {
+    const eta = Number(wp.eta_mins)
+    if (wp.rain_expected) {
+      if (start === null) start = eta
+      last = eta
+    } else if (start !== null) {
+      patches.push({ startMin: start, endMin: last })
+      start = null
+      last = null
+    }
+  }
+  if (start !== null) patches.push({ startMin: start, endMin: last })
+
+  const lastEta = Number(sorted[sorted.length - 1].eta_mins) || 0
+  const firstEta = Number(sorted[0].eta_mins) || 0
+
+  if (!patches.length) {
+    return {
+      tone: 'clear',
+      headline: 'No rain on route',
+      secondary: 'Clear skies expected all the way.',
+      patches: [],
+      closest: null,
+      lastEta,
+    }
+  }
+
+  // "Closest to the user" = earliest rain patch on the route (since ETAs
+  // measure time from NOW at the starting point).
+  const closest = patches[0]
+  const NOW_THRESHOLD_MIN = 2     // patch starting within 2 min ≈ "now"
+  const END_THRESHOLD_MIN = 2.5   // patch ending within 2.5 min of route end ≈ "continues to end"
+
+  const isNow = closest.startMin <= firstEta + NOW_THRESHOLD_MIN
+  const continuesToEnd = closest.endMin >= lastEta - END_THRESHOLD_MIN
+  const remaining = patches.length - 1
+
+  const fmt = (m) => `${Math.max(0, Math.round(Number(m) || 0))} min`
+
+  let headline
+  let secondary
+  if (isNow) {
+    if (continuesToEnd) {
+      headline = 'Rain right now — continues to destination'
+      secondary = `Expect rain for the full ${fmt(lastEta)} trip.`
+    } else {
+      headline = `Rain right now — clearing in ${fmt(closest.endMin)}`
+      secondary = 'After that, skies clear for the rest of the route.'
+    }
+  } else {
+    if (continuesToEnd) {
+      headline = `Rain starts in ${fmt(closest.startMin)}`
+      secondary = 'Once it starts, rain continues to your destination.'
+    } else {
+      const duration = Math.max(1, Math.round(closest.endMin - closest.startMin))
+      headline = `Rain starts in ${fmt(closest.startMin)}, clearing in ${fmt(closest.endMin)}`
+      secondary = `Rainy stretch ~${duration} min.`
+    }
+  }
+
+  if (remaining > 0) {
+    secondary += ` (${remaining} more patch${remaining > 1 ? 'es' : ''} further along your route.)`
+  }
+
+  return { tone: 'rain', headline, secondary, patches, closest, lastEta }
+}
+
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371
   const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -619,6 +702,14 @@ export default function App() {
       ? Number(result.route_distance_km)
       : null
 
+  // Compute the rain timeline (patches + headline) only for the finalized
+  // predict response. During the optimistic Phase-2 "_pending" window we
+  // don't have real waypoints yet, so skip.
+  const rainTimeline = useMemo(() => {
+    if (!result || result._pending) return null
+    return computeRainTimeline(result.waypoints)
+  }, [result])
+
   function handleBackToPlanner() {
     setResult(null)
     setError(null)
@@ -837,6 +928,23 @@ export default function App() {
                 </button>
               </div>
 
+              {/* Rain timeline banner: primary narrative focused on the
+                  rain patch closest to the user. Appears as soon as the
+                  predict response lands (skipped during _pending). */}
+              {rainTimeline && (
+                <div
+                  className={`rainBanner ${
+                    rainTimeline.tone === 'rain' ? 'rainBanner--rain' : 'rainBanner--clear'
+                  }`}
+                  role="status"
+                >
+                  <div className="rainBannerHead">{rainTimeline.headline}</div>
+                  {rainTimeline.secondary && (
+                    <div className="rainBannerSub">{rainTimeline.secondary}</div>
+                  )}
+                </div>
+              )}
+
               <div className="statsRow">
                 <div className="statBox">
                   <div className="statLabel">Distance</div>
@@ -845,14 +953,60 @@ export default function App() {
                   </div>
                 </div>
                 <div className="statBox">
-                  <div className="statLabel">First Rain ETA</div>
-                  <div className="statValue">
-                    {result._pending
-                      ? '—'
-                      : result.first_rain_eta == null
-                        ? 'N/A'
-                        : `${Math.round(result.first_rain_eta)} mins`}
-                  </div>
+                  {(() => {
+                    // Adaptive middle stat:
+                    //  - rain right now + ends on route => "Rain ends" Xm
+                    //  - rain right now + continues to end => "Rain duration" route length
+                    //  - rain upcoming => "Rain starts" Xm
+                    //  - no rain => "Rain" —
+                    if (result._pending) {
+                      return (
+                        <>
+                          <div className="statLabel">Rain status</div>
+                          <div className="statValue">—</div>
+                        </>
+                      )
+                    }
+                    const tl = rainTimeline
+                    if (!tl || tl.tone === 'clear' || !tl.closest) {
+                      return (
+                        <>
+                          <div className="statLabel">Rain</div>
+                          <div className="statValue">None</div>
+                        </>
+                      )
+                    }
+                    const firstEta = Number(tl.closest.startMin) || 0
+                    const lastEta = Number(tl.lastEta) || 0
+                    const isNow = firstEta <= 2
+                    const continuesToEnd = tl.closest.endMin >= lastEta - 2.5
+                    if (isNow && continuesToEnd) {
+                      return (
+                        <>
+                          <div className="statLabel">Rain duration</div>
+                          <div className="statValue">{Math.round(lastEta)} min</div>
+                        </>
+                      )
+                    }
+                    if (isNow) {
+                      return (
+                        <>
+                          <div className="statLabel">Rain ends</div>
+                          <div className="statValue">
+                            {Math.round(tl.closest.endMin)} min
+                          </div>
+                        </>
+                      )
+                    }
+                    return (
+                      <>
+                        <div className="statLabel">Rain starts</div>
+                        <div className="statValue">
+                          {Math.round(firstEta)} min
+                        </div>
+                      </>
+                    )
+                  })()}
                 </div>
                 <div className="statBox">
                   <div className="statLabel">Rain Speed</div>
