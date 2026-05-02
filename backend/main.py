@@ -127,34 +127,51 @@ _radar_state_lock = threading.Lock()
 RADAR_CACHE_TTL_SEC = RADAR_TTL_SEC  # keep a single source of truth
 
 
+def _cache_is_fresh(ttl_sec: float) -> bool:
+    """
+    True iff radar_cache was populated less than ttl_sec seconds ago AND has
+    all the fields downstream code depends on. Purely in-memory — does NOT
+    consult the filesystem, so ephemeral filesystem quirks on Render can't
+    bust the cache.
+    """
+    last = radar_cache.get("last_loaded")
+    if not last:
+        return False
+    if (time.time() - float(last)) >= float(ttl_sec):
+        return False
+    if not radar_cache.get("frame_data"):
+        return False
+    if not radar_cache.get("movement"):
+        return False
+    if radar_cache.get("clutter_mask") is None:
+        return False
+    if not radar_cache.get("latest_frame"):
+        return False
+    return True
+
+
 def _load_radar_state(ttl_sec: float = RADAR_CACHE_TTL_SEC, *, force: bool = False) -> dict:
     """
     Lazy cache manager used by /predict.
 
-    Fresh path (GIF < ttl_sec): does NOT download or re-extract frames; reuses in-memory cache.
-    Stale path: refreshes GIF, clears old PNGs, extracts frames + timestamps, then recomputes
-    clutter mask + movement vector once.
+    Fresh path (cache populated < ttl_sec ago): returns in-memory cache with
+    no disk I/O. Stale path: refreshes GIF, clears old PNGs, extracts frames
+    + timestamps, then recomputes clutter mask + movement vector once.
     """
-    now = time.time()
-
-    # Fast path: valid in-memory state AND GIF still fresh
-    try:
-        gif_fresh = os.path.exists(GIF_SAVE_PATH) and (now - os.path.getmtime(GIF_SAVE_PATH) < ttl_sec)
-    except Exception:
-        gif_fresh = False
-
-    if (not force) and gif_fresh and radar_cache.get("frame_data") and radar_cache.get("movement") and radar_cache.get("clutter_mask") is not None:
+    # Fast path: purely in-memory, no filesystem checks
+    if (not force) and _cache_is_fresh(ttl_sec):
         return radar_cache
 
     with _radar_state_lock:
         # Re-check inside lock
+        if (not force) and _cache_is_fresh(ttl_sec):
+            return radar_cache
+
+        now = time.time()
         try:
             gif_fresh = os.path.exists(GIF_SAVE_PATH) and (now - os.path.getmtime(GIF_SAVE_PATH) < ttl_sec)
         except Exception:
             gif_fresh = False
-
-        if (not force) and gif_fresh and radar_cache.get("frame_data") and radar_cache.get("movement") and radar_cache.get("clutter_mask") is not None:
-            return radar_cache
 
         # If stale/missing, refresh (download + clear PNGs + extract frames)
         frame_data, did_refresh = refresh_frames_if_stale(ttl_sec=ttl_sec, force=force, clear_pngs=True)
@@ -202,6 +219,27 @@ def health():
         "status": "ok",
         "service": "Garaj Baras API",
         "version": "1.0.0"
+    }
+
+
+@app.get("/debug/cache")
+def debug_cache():
+    """Inspect radar cache state. Used to diagnose slow-request issues."""
+    frame_data = radar_cache.get("frame_data") or []
+    last = radar_cache.get("last_loaded")
+    age = (time.time() - float(last)) if last else None
+    return {
+        "has_frame_data": bool(frame_data),
+        "frame_data_len": len(frame_data),
+        "has_movement": bool(radar_cache.get("movement")),
+        "has_clutter_mask": radar_cache.get("clutter_mask") is not None,
+        "has_latest_frame": bool(radar_cache.get("latest_frame")),
+        "last_loaded": last,
+        "cache_age_sec": age,
+        "ttl_sec": RADAR_CACHE_TTL_SEC,
+        "cache_is_fresh": _cache_is_fresh(RADAR_CACHE_TTL_SEC),
+        "pid": os.getpid(),
+        "gif_path_exists": os.path.exists(GIF_SAVE_PATH),
     }
 
 # ENDPOINT 2: Current Rain Movement
