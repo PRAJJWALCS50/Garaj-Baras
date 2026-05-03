@@ -391,8 +391,6 @@ function buildColoredSegments(routeLonLat, predictedWaypoints) {
       eta_mins: wp?.eta_mins ?? null,
       dbz: wp?.dbz ?? null,
       rain_expected: !!wp?.rain_expected,
-      cloud_cover_pct: wp?.cloud_cover_pct ?? null,
-      cloud_override: !!wp?.cloud_override,
       mid: { lat: midLat, lon: midLon },
     })
   }

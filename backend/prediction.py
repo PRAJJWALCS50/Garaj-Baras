@@ -564,6 +564,20 @@ def check_route_rain(waypoints_pixels, dx, dy, latest_frame_path,
 
     results = []
     for i, (px, py, eta) in enumerate(waypoints_pixels):
+        # Clamp coordinates once up-front. Some (lat,lon)->pixel mappings near
+        # the radar edge can round slightly outside bounds; numpy negative
+        # indices also wrap around silently, causing "missed rain" artifacts.
+        try:
+            mh, mw = base_rain_mask.shape[:2]
+        except Exception:
+            mh, mw = None, None
+        if mw is not None and mh is not None:
+            px = int(max(0, min(int(px), int(mw) - 1)))
+            py = int(max(0, min(int(py), int(mh) - 1)))
+        else:
+            px = int(px)
+            py = int(py)
+
         effective_eta = eta + lag_mins
 
         # Buffer: check effective_eta, +5, +10
@@ -582,10 +596,10 @@ def check_route_rain(waypoints_pixels, dx, dy, latest_frame_path,
 
         for t in check_times:
             mask = get_mask(t)
-            # If starting on green, be strict.
-            if mask[py, px] > 0:
-                hits += 1
-            elif not is_center_green and is_rain_at_pixel(mask, px, py, radius=1):
+            # Always use a small neighborhood check; being strict on "green"
+            # backgrounds causes false negatives when the georef rounds a
+            # waypoint onto an adjacent green pixel near a rain edge.
+            if is_rain_at_pixel(mask, px, py, radius=1):
                 hits += 1
 
         if hits == 3:

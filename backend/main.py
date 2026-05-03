@@ -25,15 +25,12 @@ from prediction import (generate_waypoints, check_route_rain,   # type: ignore
                         haversine_km)
 from georef import latlon_to_pixel, is_within_radar  # type: ignore
 from fuzzy import enrich_results  # type: ignore
-from cloud_cover import cloud_cover_at, IST  # type: ignore
+from datetime import timezone as _timezone
 
 from datetime import datetime as _dt, timedelta as _td
 
-# IMD radar sometimes returns ground-clutter or RF noise that masquerades
-# as rain. We cross-check each rain-flagged waypoint against Open-Meteo's
-# forecast cloud cover — if the sky is clear, we flip the waypoint to
-# "No Rain" and flag the override so the UI can explain it.
-CLOUD_OVERRIDE_THRESHOLD_PCT = 30
+# India Standard Time (UTC+5:30)
+IST = _timezone(_td(hours=5, minutes=30))
 
 app = FastAPI(
     title="Garaj Baras API",
@@ -134,51 +131,6 @@ radar_cache = {
 
 _radar_state_lock = threading.Lock()
 RADAR_CACHE_TTL_SEC = RADAR_TTL_SEC  # keep a single source of truth
-
-
-def _apply_cloud_override(enriched: list[dict]) -> None:
-    """
-    Cross-check IMD rain predictions against Open-Meteo cloud-cover forecast.
-
-    For each waypoint with rain_expected=True, look up the cloud cover at
-    its lat/lon for (now + eta_mins). If coverage is below the threshold,
-    flip to "No Rain" and record the override. Failures (API down, timeout,
-    missing data) are fail-open — we keep the IMD prediction unchanged.
-
-    Annotates every waypoint with ``cloud_cover_pct`` (int or None) and
-    ``cloud_override`` (bool).
-    """
-    now_ist = _dt.now(IST)
-    for e in enriched:
-        e["cloud_cover_pct"] = None
-        e["cloud_override"] = False
-
-        if not e.get("rain_expected"):
-            continue
-
-        try:
-            when = now_ist + _td(minutes=float(e.get("eta_mins") or 0.0))
-            cc = cloud_cover_at(float(e["lat"]), float(e["lon"]), when)
-        except Exception:
-            cc = None
-
-        if cc is None:
-            # Fail-open: Open-Meteo unreachable, trust IMD.
-            continue
-
-        e["cloud_cover_pct"] = cc
-        if cc < CLOUD_OVERRIDE_THRESHOLD_PCT:
-            # IMD said rain but the sky model disagrees — likely radar noise.
-            e["rain_expected"] = False
-            e["label"] = "No Rain"
-            e["color"] = "#000000"
-            e["dbz"] = 0
-            e["confidence"] = "none"
-            e["message"] = (
-                f"IMD radar flagged rain but forecast cloud cover is only {cc}%"
-                " — likely radar noise, treating as clear."
-            )
-            e["cloud_override"] = True
 
 
 def _cache_is_fresh(ttl_sec: float) -> bool:
@@ -466,21 +418,14 @@ def predict_waypoints(payload: PredictWaypointsRequest):
         for e in enriched:
             e["in_radar_bounds"] = is_within_radar(e["lat"], e["lon"])
 
-        # Cross-check IMD rain flags against Open-Meteo cloud cover. Must
-        # run BEFORE the summary counts so first_rain_eta / rain_waypoints
-        # reflect any overrides.
-        _apply_cloud_override(enriched)
-
         rain_wps = [e for e in enriched if e["rain_expected"]]
         clear_wps = [e for e in enriched if not e["rain_expected"]]
         first_rain = next((e for e in enriched if e["rain_expected"]), None)
-        cloud_overrides = sum(1 for e in enriched if e.get("cloud_override"))
 
         return {
             "total_waypoints": len(enriched),
             "rain_waypoints": len(rain_wps),
             "clear_waypoints": len(clear_wps),
-            "cloud_overridden_waypoints": cloud_overrides,
             "first_rain_eta": first_rain["eta_mins"] if first_rain else None,
             "first_rain_label": first_rain["label"] if first_rain else None,
             "rain_direction_from": dir_from,
@@ -586,13 +531,9 @@ def predict_rain(route: RouteRequest):
                 e["lat"], e["lon"]
             )
 
-        # Cross-check IMD rain flags against Open-Meteo cloud cover.
-        _apply_cloud_override(enriched)
-
         # Build summary
         rain_wps = [e for e in enriched if e["rain_expected"]]
         clear_wps = [e for e in enriched if not e["rain_expected"]]
-        cloud_overrides = sum(1 for e in enriched if e.get("cloud_override"))
 
         first_rain = next(
             (e for e in enriched if e["rain_expected"]), None
@@ -603,7 +544,6 @@ def predict_rain(route: RouteRequest):
             "total_waypoints": len(enriched),
             "rain_waypoints": len(rain_wps),
             "clear_waypoints": len(clear_wps),
-            "cloud_overridden_waypoints": cloud_overrides,
             "first_rain_eta": first_rain["eta_mins"] if first_rain else None,
             "first_rain_label": first_rain["label"] if first_rain else None,
             "rain_direction_from": dir_from,
