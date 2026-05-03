@@ -50,8 +50,22 @@ async function postWithRetry(url, body, config = {}, onAttempt = null) {
   throw lastErr
 }
 
-// Rough Delhi NCR bounding box (tune anytime): left,top,right,bottom (lon,lat,lon,lat)
-const NCR_VIEWBOX = '76.5,29.7,78.9,28.0'
+function computeViewboxAround(lat, lon, radiusKm = 180) {
+  const la = Number(lat)
+  const lo = Number(lon)
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return null
+
+  // Very rough: 1° lat ≈ 111 km; lon shrinks by cos(lat).
+  const dLat = radiusKm / 111
+  const dLon = radiusKm / (111 * Math.max(0.2, Math.cos((la * Math.PI) / 180)))
+
+  const left = lo - dLon
+  const right = lo + dLon
+  const top = la + dLat
+  const bottom = la - dLat
+  // Nominatim expects "left,top,right,bottom" (lon,lat,lon,lat)
+  return `${left},${top},${right},${bottom}`
+}
 
 function getRainColor(label) {
   const l = String(label || '')
@@ -195,9 +209,11 @@ async function geocode(place) {
   }
 }
 
-async function searchPlaces(query, signal) {
+async function searchPlaces(query, signal, opts = {}) {
   const q = String(query ?? '').trim()
   if (!q) return []
+
+  const viewbox = opts?.viewbox || null
 
   const res = await axios.get(NOMINATIM_SEARCH_URL, {
     timeout: 15000,
@@ -207,8 +223,9 @@ async function searchPlaces(query, signal) {
       format: 'jsonv2',
       limit: 6,
       addressdetails: 1,
-      bounded: 1,
-      viewbox: NCR_VIEWBOX,
+      // Do NOT hard-restrict to a region. If we have a viewbox (e.g. user's
+      // current location), use it as a soft ranking hint.
+      ...(viewbox ? { viewbox, bounded: 0 } : {}),
       countrycodes: 'in',
     },
     headers: { Accept: 'application/json' },
@@ -397,6 +414,7 @@ export default function App() {
   const [avgSpeedKmh, setAvgSpeedKmh] = useState('')
   const [sourcePlace, setSourcePlace] = useState(null) // {lat,lon,display_name}
   const [destPlace, setDestPlace] = useState(null) // {lat,lon,display_name}
+  const [userLoc, setUserLoc] = useState(null) // {lat,lon} for soft place-search bias
 
   const [sourceSug, setSourceSug] = useState([])
   const [destSug, setDestSug] = useState([])
@@ -432,6 +450,32 @@ export default function App() {
     warmBackend()
   }, [])
 
+  // Soft-bias search suggestions near the user's current location.
+  useEffect(() => {
+    let alive = true
+    try {
+      if (!('geolocation' in navigator)) return
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (!alive) return
+          const lat = Number(pos?.coords?.latitude)
+          const lon = Number(pos?.coords?.longitude)
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+          setUserLoc({ lat, lon })
+        },
+        () => {
+          // ignore (permission denied / unavailable)
+        },
+        { enableHighAccuracy: false, timeout: 6000, maximumAge: 5 * 60 * 1000 }
+      )
+    } catch {
+      // ignore
+    }
+    return () => {
+      alive = false
+    }
+  }, [])
+
   // Autocomplete: Source
   useEffect(() => {
     const q = String(source || '').trim()
@@ -447,7 +491,8 @@ export default function App() {
       const ac = new AbortController()
       sourceAbortRef.current = ac
       try {
-        const items = await searchPlaces(q, ac.signal)
+        const viewbox = userLoc ? computeViewboxAround(userLoc.lat, userLoc.lon, 220) : null
+        const items = await searchPlaces(q, ac.signal, { viewbox })
         setSourceSug(items)
       } catch (e) {
         if (e?.name === 'CanceledError' || e?.name === 'AbortError') return
@@ -458,7 +503,7 @@ export default function App() {
     return () => {
       if (sourceDebounceRef.current) clearTimeout(sourceDebounceRef.current)
     }
-  }, [source])
+  }, [source, userLoc])
 
   // Autocomplete: Destination
   useEffect(() => {
@@ -475,7 +520,8 @@ export default function App() {
       const ac = new AbortController()
       destAbortRef.current = ac
       try {
-        const items = await searchPlaces(q, ac.signal)
+        const viewbox = userLoc ? computeViewboxAround(userLoc.lat, userLoc.lon, 220) : null
+        const items = await searchPlaces(q, ac.signal, { viewbox })
         setDestSug(items)
       } catch (e) {
         if (e?.name === 'CanceledError' || e?.name === 'AbortError') return
@@ -486,7 +532,7 @@ export default function App() {
     return () => {
       if (destDebounceRef.current) clearTimeout(destDebounceRef.current)
     }
-  }, [destination])
+  }, [destination, userLoc])
 
   async function handlePredict() {
     const startCity = source.trim()
