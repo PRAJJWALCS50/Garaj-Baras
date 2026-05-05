@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import './App.css'
+import NetworkLayers from './NetworkLayers.jsx'
 
 const API_BASE =
   import.meta.env.VITE_API_BASE || 'https://garaj-baras-api.onrender.com'
@@ -407,6 +408,7 @@ function joinApiUrl(maybePath) {
 
 export default function App() {
   const [showWelcomePopup, setShowWelcomePopup] = useState(true)
+  const [screen, setScreen] = useState('rain') // rain | network
   const [source, setSource] = useState('')
   const [destination, setDestination] = useState('')
   const [avgSpeedKmh, setAvgSpeedKmh] = useState('')
@@ -789,12 +791,23 @@ export default function App() {
         </div>
       )}
       <header className="topbar">
-        <div style={{ width: 36 }} />
+        <button
+          type="button"
+          className="topTabBtn"
+          onClick={() => setScreen((s) => (s === 'rain' ? 'network' : 'rain'))}
+          aria-label={screen === 'rain' ? 'Open Network Layers' : 'Back to Rain Route'}
+        >
+          {screen === 'rain' ? 'Network' : 'Rain'}
+        </button>
         <div className="brandTitle">GARAJ BARAS</div>
         <div style={{ width: 36 }} />
       </header>
 
       <div className="screen">
+        {screen === 'network' ? (
+          <NetworkLayers />
+        ) : (
+          <>
         {/* Hero + Inputs */}
         {!loading && !result && (
           <>
@@ -1164,6 +1177,8 @@ export default function App() {
               </div>
             </section>
           </section>
+        )}
+          </>
         )}
       </div>
     </div>

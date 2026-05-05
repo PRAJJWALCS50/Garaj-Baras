@@ -1156,3 +1156,350 @@
 .legendSwatch--verylight { background: #7DD3FC; }
 .legendSwatch--clear { background: #FFFFFF; opacity: 0.9; }
 .legendSwatch--unknown { background: #64748B; opacity: 0.9; }
+
+/* ------------------------------ */
+/* Network layers (second screen) */
+/* ------------------------------ */
+
+.topTabBtn {
+  width: 86px;
+  height: 36px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(13, 20, 36, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 850;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.topTabBtn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(79, 195, 247, 0.35);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.08);
+}
+
+.netScreen {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.netHero {
+  padding: 16px;
+}
+
+.netTitle {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 900;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.96);
+  letter-spacing: 0.2px;
+}
+
+.netSub {
+  margin-top: 8px;
+  font-size: 13px;
+  color: rgba(220, 228, 245, 0.78);
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.netGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.netLayerCard {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(13, 20, 36, 0.40);
+  border-radius: 16px;
+  padding: 12px 12px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.92);
+  text-align: left;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.netLayerCard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(79, 195, 247, 0.28);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.08);
+}
+
+.netLayerCard--active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.20), rgba(79, 70, 229, 0.14));
+  border-color: rgba(79, 195, 247, 0.34);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.netLayerTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.netLayerName {
+  font-weight: 900;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+}
+
+.netLayerPdu {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(13, 20, 36, 0.55);
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.netLayerSub {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(220, 228, 245, 0.72);
+  line-height: 1.25;
+  font-weight: 650;
+}
+
+.netDetail {
+  padding: 14px 14px;
+}
+
+.netDetailHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.netDetailTitle {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 900;
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.netDetailBadge {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(13, 20, 36, 0.55);
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.netDetailBody {
+  margin-top: 10px;
+  font-size: 13px;
+  color: rgba(220, 228, 245, 0.80);
+  line-height: 1.4;
+  font-weight: 650;
+}
+
+.netDetailMeta {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.netMetaRow {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 10px;
+  border-radius: 14px;
+  background: rgba(13, 20, 36, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.netMetaLabel {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.7px;
+  color: rgba(220, 228, 245, 0.70);
+  text-transform: uppercase;
+}
+
+.netMetaValue {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.90);
+  line-height: 1.35;
+}
+
+.netSim {
+  padding: 14px 14px;
+}
+
+.netSimHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.netSimTitle {
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-weight: 900;
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.netSimSub {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: rgba(220, 228, 245, 0.72);
+  line-height: 1.35;
+}
+
+.netSimMode {
+  display: flex;
+  gap: 8px;
+}
+
+.netModeBtn {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(13, 20, 36, 0.45);
+  color: rgba(255, 255, 255, 0.90);
+  border-radius: 12px;
+  padding: 9px 10px;
+  font-weight: 900;
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.netModeBtn--active {
+  border-color: rgba(79, 195, 247, 0.34);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.08);
+  background: rgba(14, 165, 233, 0.14);
+}
+
+.netSimInputRow {
+  margin-top: 12px;
+}
+
+.netInputLabel {
+  font-size: 11px;
+  letter-spacing: 0.7px;
+  color: rgba(220, 228, 245, 0.70);
+  font-weight: 900;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.netInput {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(15, 26, 51, 0.85);
+  padding: 12px 12px;
+  color: rgba(255, 255, 255, 0.92);
+  outline: none;
+  font-size: 13px;
+  font-weight: 700;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.netInput:focus {
+  border-color: rgba(79, 195, 247, 0.55);
+  box-shadow: 0 0 0 5px rgba(79, 195, 247, 0.12);
+  transform: translateY(-1px);
+}
+
+.netStepRow {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.netStepBadge {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(13, 20, 36, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.netStepBtns {
+  display: flex;
+  gap: 8px;
+}
+
+.netStepBtn {
+  width: 42px;
+  height: 38px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(13, 20, 36, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.netStepBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.netStepBtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(79, 195, 247, 0.35);
+  box-shadow: 0 0 0 4px rgba(79, 195, 247, 0.08);
+}
+
+.netCodeWrap {
+  margin-top: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(8, 12, 24, 0.55);
+  overflow: hidden;
+}
+
+.netCode {
+  margin: 0;
+  padding: 12px 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(220, 228, 245, 0.92);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.netHint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(220, 228, 245, 0.72);
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+@media (max-width: 360px) {
+  .netGrid {
+    grid-template-columns: 1fr;
+  }
+  .topTabBtn {
+    width: 78px;
+  }
+}
