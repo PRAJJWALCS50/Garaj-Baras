@@ -3366,7 +3366,7 @@
   box-sizing: border-box;
   padding: 14px 16px;
   border-radius: 16px;
-  background: #0F6E4A;
+  background: linear-gradient(135deg, #173F8E, #102A66);
   color: #fff;
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
 }
@@ -3410,6 +3410,7 @@
 }
 .nav-turn__rain span:last-child { min-width: 0; }
 .nav-turn__rain--rain { background: rgba(29, 78, 216, 0.75); }
+.nav-turn__rain--fog { background: rgba(148, 163, 184, 0.25); }
 .nav-turn__sync {
   color: rgba(255, 255, 255, 0.88);
   font-size: 11px;
@@ -3427,7 +3428,7 @@
   border-radius: 0 0 12px 12px;
   margin-top: -8px;
   margin-left: 12px;
-  background: #0B5238;
+  background: #0E285F;
   color: #fff;
   font-size: 13px;
   font-weight: 700;

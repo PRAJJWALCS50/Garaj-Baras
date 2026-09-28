@@ -2149,6 +2149,7 @@ export default function App() {
   // ── Live journey mode ──
   const [liveActive, setLiveActive] = useState(false)
   const [livePos, setLivePos] = useState(null)
+  const [navWeatherMode, setNavWeatherMode] = useState('rain')
   const sampledRef = useRef([])          // original sampled waypoints (with cumKm)
   const routeLonLatRef = useRef(null)    // ORS geometry ([lon,lat]) for recoloring
   const liveSpeedRef = useRef(null)      // planned avg speed (km/h)
@@ -2388,6 +2389,7 @@ export default function App() {
   function startNavigation() {
     if (routeCoords.length < 2) return
     setLivePos(null)
+    setNavWeatherMode('rain')
     setLiveActive(true)
   }
 
@@ -2998,6 +3000,8 @@ export default function App() {
                       openSegmentPopup={openSegmentPopup}
                       livePos={livePos}
                       fog={routeFog}
+                      weatherMode={navWeatherMode}
+                      onWeatherModeChange={setNavWeatherMode}
                     />
                     <LiveJourneyPanel
                       apiBase={API_BASE}
@@ -3006,6 +3010,7 @@ export default function App() {
                       plannedSpeedKmh={liveSpeedRef.current}
                       steps={routeSteps}
                       fog={routeFog}
+                      weatherMode={navWeatherMode}
                       onLivePos={setLivePos}
                       onWaypointsUpdated={applyLivePrediction}
                       sourceName={String(source || '').split(',')[0].trim()}

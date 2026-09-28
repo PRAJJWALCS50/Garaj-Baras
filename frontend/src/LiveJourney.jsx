@@ -192,6 +192,7 @@ export default function LiveJourneyPanel({
   plannedSpeedKmh,
   steps = [],         // ORS turn-by-turn: [{type, name, exit, wp (routeCoords index)}]
   fog = null,         // fog.js points along the route, or null
+  weatherMode = 'rain', // selected map/weather layer
   onLivePos,          // ({lat, lon, heading}) → App → RouteMap marker
   onWaypointsUpdated, // (rawResponseData) → App merges + recolors segments
   onEnd,
@@ -601,6 +602,9 @@ export default function LiveJourneyPanel({
       ? t(`In fog · visibility ${vis} — slow down`, `कोहरे में · दृश्यता ${vis} — धीमे चलें`)
       : t(`Fog in ${fmtMins(((zoneAhead.startKm - progressKm) / speedForEta()) * 60)} · visibility ${vis}`, `${fmtMins(((zoneAhead.startKm - progressKm) / speedForEta()) * 60)} में कोहरा · दृश्यता ${vis}`)
   }
+  const fogStatus = fogChip || (fog == null
+    ? t('Checking fog…', 'कोहरा जाँच रहे हैं…')
+    : t('No fog ahead', 'आगे कोहरा नहीं'))
 
   // Navigating from the entered source while the user isn't on the route yet
   const fromSource = sourceName || t('the start', 'शुरुआती बिंदु')
@@ -612,10 +616,10 @@ export default function LiveJourneyPanel({
 
   const turnWeather = !arrived && (
     <div className="nav-turn__weather">
-      {rainChip && (
-        <button type="button" className={`nav-turn__rain nav-turn__rain--${rainChip.tone}`} onClick={() => setSheetOpen(true)}>
-          <span aria-hidden>{rainChip.tone === 'clear' ? '☀' : '🌧'}</span>
-          <span>{rainChip.text}{rainChip.sub ? ` · ${rainChip.sub}` : ''}</span>
+      {(weatherMode === 'fog' || rainChip) && (
+        <button type="button" className={`nav-turn__rain nav-turn__rain--${weatherMode === 'fog' ? 'fog' : rainChip.tone}`} onClick={() => setSheetOpen(true)}>
+          <span aria-hidden>{weatherMode === 'fog' ? '🌫' : rainChip.tone === 'clear' ? '☀' : '🌧'}</span>
+          <span>{weatherMode === 'fog' ? fogStatus : `${rainChip.text}${rainChip.sub ? ` · ${rainChip.sub}` : ''}`}</span>
         </button>
       )}
       <span className="nav-turn__sync" role="timer" aria-live="off">
@@ -680,14 +684,11 @@ export default function LiveJourneyPanel({
         </div>
       )}
 
-      {/* ── Bottom sheet: fog/update chips + ETA bar + details ── */}
+      {/* ── Bottom sheet: update note + ETA bar + details ── */}
       <div className={`nav-sheet${sheetOpen ? ' is-open' : ''}`}>
-        {(fogChip || updateNote) && (
+        {updateNote && (
           <div className="nav-chips">
-            {fogChip && (
-              <span className="nav-chip nav-chip--fog"><span aria-hidden>🌫</span> {fogChip}</span>
-            )}
-            {updateNote && <span className="nav-chip nav-chip--note">{updateNote}</span>}
+            <span className="nav-chip nav-chip--note">{updateNote}</span>
           </div>
         )}
 
@@ -714,7 +715,12 @@ export default function LiveJourneyPanel({
 
         {sheetOpen && (
           <div className="nav-details">
-            {hero}
+            {weatherMode === 'fog' && !arrived ? (
+              <div className="live-hero live-hero--clear">
+                <span className="live-hero__big">{fogStatus}</span>
+                <span className="live-hero__sub">{t('Forecast visibility along the rest of your route.', 'आपके बाकी रास्ते पर अनुमानित दृश्यता।')}</span>
+              </div>
+            ) : hero}
 
             {!arrived && !simOn && awaitingRoute && (
               <p className="live-anchor-note">

@@ -193,13 +193,17 @@ export default function RouteMap({
   livePos,          // {lat, lon, heading} while a live journey is running, else null
   fog,              // [{cumKm, visM, level}] from fog.js, or null
   navMode = false,  // full-screen turn-by-turn map (heading-up, follow-me)
+  weatherMode = null, // controlled rain/fog mode in navigation
+  onWeatherModeChange,
   height = '320px', // non-nav map height
 }) {
   const t = useT()
   const [mapRef, setMapRef] = useState(null)
   const isLive = !!livePos
-  const [showRain, setShowRain] = useState(true)
-  const [showFog, setShowFog] = useState(true)
+  const [rainLayerOn, setRainLayerOn] = useState(true)
+  const [fogLayerOn, setFogLayerOn] = useState(true)
+  const showRain = navMode ? weatherMode !== 'fog' : rainLayerOn
+  const showFog = navMode ? weatherMode === 'fog' : fogLayerOn
   const [headingUp, setHeadingUp] = useState(true)
   const [bearingDeg, setBearingDeg] = useState(0)
 
@@ -512,8 +516,8 @@ export default function RouteMap({
           </>
         )}
 
-        {/* Rain stop markers (persist after the animation) */}
-        {journey?.stops.map((stop, i) => (
+        {/* Rain stop markers only belong to the rain view */}
+        {showRain && journey?.stops.map((stop, i) => (
           <Marker
             key={`stop-${i}`}
             position={[stop.lat, stop.lon]}
@@ -553,7 +557,7 @@ export default function RouteMap({
           />
         )}
 
-        {activeSeg?.mid && (
+        {showRain && activeSeg?.mid && (
           <Popup
             position={[activeSeg.mid.lat, activeSeg.mid.lon]}
             closeButton
@@ -582,7 +586,7 @@ export default function RouteMap({
       </MapContainer>
 
       {/* Journey chip: what stopped the car */}
-      {activeStop && (
+      {showRain && activeStop && (
         <div className="journey-chip" style={{ '--stop-color': activeStop.color }}>
           <span className="journey-chip__icon" aria-hidden>⛈</span>
           <div className="journey-chip__text">
@@ -613,12 +617,12 @@ export default function RouteMap({
         </div>
       )}
 
-      {/* Layer toggles: forecast rain coloring + fog (+ nav controls) */}
+      {/* Navigation selects one weather view; the results map keeps independent overlays. */}
       <div className={`map-layers${navMode ? ' map-layers--nav' : ''}`}>
         <button
           type="button"
           className={`map-layer-btn${showRain ? ' is-on' : ''}`}
-          onClick={() => setShowRain((v) => !v)}
+          onClick={() => navMode ? onWeatherModeChange?.('rain') : setRainLayerOn((v) => !v)}
           aria-pressed={showRain}
           title={t('Rain forecast coloring', 'बारिश पूर्वानुमान रंग')}
         >
@@ -627,7 +631,13 @@ export default function RouteMap({
         <button
           type="button"
           className={`map-layer-btn${showFog ? ' is-on' : ''}`}
-          onClick={() => setShowFog((v) => !v)}
+          onClick={() => {
+            if (navMode) {
+              setActiveStop(null)
+              setActiveSeg?.(null)
+              onWeatherModeChange?.('fog')
+            } else setFogLayerOn((v) => !v)
+          }}
           aria-pressed={showFog}
           title={t('Fog / low visibility', 'कोहरा / कम दृश्यता')}
         >
