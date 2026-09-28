@@ -559,7 +559,7 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   `rotate: true` (leaflet-rotate) that follows the puck heading-up (bearing =
   360 − route heading, puck framed in the lower third; compass button toggles
   north-up), a deep-blue top card with the next maneuver + distance + street and a
-  "Then" hint, a speed bubble, and a bottom bar (Exit · time left · km left ·
+  "Then" hint, a deep-blue speed bubble, and a deep-blue bottom bar (Exit · time left · km left ·
   arrival clock · expand). The rain status and live 5-minute radar sync
   countdown sit on the right of the maneuver card. Selecting Fog replaces the
   rain status with the next fog warning (or "No fog ahead") and hides rain

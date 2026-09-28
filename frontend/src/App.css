@@ -3450,9 +3450,9 @@
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: #fff;
-  color: #111827;
-  border: 3px solid #E5E7EB;
+  background: #173F8E;
+  color: #fff;
+  border: 3px solid #60A5FA;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
@@ -3507,8 +3507,8 @@ button.nav-chip { cursor: pointer; }
   gap: 10px;
   padding: 10px 12px;
   border-radius: 18px;
-  background: #fff;
-  color: #111827;
+  background: linear-gradient(135deg, #173F8E, #102A66);
+  color: #fff;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
 .nav-exit {
@@ -3534,16 +3534,16 @@ button.nav-chip { cursor: pointer; }
   cursor: pointer;
   font-family: inherit;
 }
-.nav-eta__big { font-size: 24px; font-weight: 900; color: #15803D; line-height: 1.1; }
-.nav-eta__sub { font-size: 14px; font-weight: 600; color: #4B5563; }
+.nav-eta__big { font-size: 24px; font-weight: 900; color: #fff; line-height: 1.1; }
+.nav-eta__sub { font-size: 14px; font-weight: 600; color: #D2E4FF; }
 .nav-expand {
   flex: 0 0 auto;
   width: 46px;
   height: 46px;
   border-radius: 50%;
-  border: 1px solid #E5E7EB;
-  background: #F3F4F6;
-  color: #111827;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: #204B9A;
+  color: #fff;
   font-size: 22px;
   cursor: pointer;
 }
