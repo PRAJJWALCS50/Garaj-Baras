@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- shared route helpers and icon */
 import { tr } from './i18n'
 
 // Shared turn-by-turn helpers (ORS step types) — used by the route card and navigation.
