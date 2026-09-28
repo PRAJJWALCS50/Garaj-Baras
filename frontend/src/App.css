@@ -3382,6 +3382,41 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.nav-turn__weather {
+  display: flex;
+  flex: 0 1 48%;
+  min-width: 0;
+  margin-left: auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.nav-turn__rain {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+.nav-turn__rain span:last-child { min-width: 0; }
+.nav-turn__rain--rain { background: rgba(29, 78, 216, 0.75); }
+.nav-turn__sync {
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .nav-mico { flex: 0 0 auto; color: #fff; }
 .nav-mico--glyph { display: inline-grid; place-items: center; width: 44px; line-height: 1; }
 .nav-then {

@@ -560,7 +560,9 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   360 − route heading, puck framed in the lower third; compass button toggles
   north-up), a green top card with the next maneuver + distance + street and a
   "Then" hint, a speed bubble, and a bottom bar (Exit · time left · km left ·
-  arrival clock · expand). Rain/fog chips sit above the bar; the expanded
+  arrival clock · expand). The rain status and live 5-minute radar sync
+  countdown sit on the right of the maneuver card; fog and update chips sit
+  above the bar. The expanded
   sheet holds the full rain hero, guardian/sync status and the upcoming
   directions list. Turn-by-turn comes from the ORS response's
   `segments[].steps` (type/name/exit_number/way_points[0] kept in

@@ -610,6 +610,22 @@ export default function LiveJourneyPanel({
     </div>
   ) : null
 
+  const turnWeather = !arrived && (
+    <div className="nav-turn__weather">
+      {rainChip && (
+        <button type="button" className={`nav-turn__rain nav-turn__rain--${rainChip.tone}`} onClick={() => setSheetOpen(true)}>
+          <span aria-hidden>{rainChip.tone === 'clear' ? '☀' : '🌧'}</span>
+          <span>{rainChip.text}{rainChip.sub ? ` · ${rainChip.sub}` : ''}</span>
+        </button>
+      )}
+      <span className="nav-turn__sync" role="timer" aria-live="off">
+        {syncing
+          ? t('Syncing radar…', 'रडार सिंक हो रहा है…')
+          : `${t('Radar sync in', 'रडार सिंक')} ${Math.floor(syncLeftSec / 60)}:${String(syncLeftSec % 60).padStart(2, '0')}`}
+      </span>
+    </div>
+  )
+
   const endJourney = () => { endServerJourney(); onEnd() }
 
   return (
@@ -636,6 +652,7 @@ export default function LiveJourneyPanel({
               <span className="nav-turn__instr">{maneuverText(nextStep)}</span>
               {streetName(nextStep) && <span className="nav-turn__street">{streetName(nextStep)}</span>}
             </div>
+            {turnWeather}
           </div>
         ) : (
           <div className="nav-turn">
@@ -644,6 +661,7 @@ export default function LiveJourneyPanel({
               <span className="nav-turn__dist">{phase === 'starting' ? t('Locating…', 'स्थान खोजा जा रहा है…') : fmtDist(remainKm)}</span>
               <span className="nav-turn__instr">{t('Follow the route', 'रास्ते पर चलते रहें')}</span>
             </div>
+            {turnWeather}
           </div>
         )}
         {thenStep && !arrived && (
@@ -662,16 +680,10 @@ export default function LiveJourneyPanel({
         </div>
       )}
 
-      {/* ── Bottom sheet: weather chips + ETA bar + details ── */}
+      {/* ── Bottom sheet: fog/update chips + ETA bar + details ── */}
       <div className={`nav-sheet${sheetOpen ? ' is-open' : ''}`}>
-        {(rainChip || fogChip || updateNote) && (
+        {(fogChip || updateNote) && (
           <div className="nav-chips">
-            {rainChip && (
-              <button type="button" className={`nav-chip nav-chip--${rainChip.tone}`} onClick={() => setSheetOpen(true)}>
-                <span aria-hidden>{rainChip.tone === 'clear' ? '☀' : '🌧'}</span> {rainChip.text}
-                {rainChip.sub && <span className="nav-chip__sub">· {rainChip.sub}</span>}
-              </button>
-            )}
             {fogChip && (
               <span className="nav-chip nav-chip--fog"><span aria-hidden>🌫</span> {fogChip}</span>
             )}
