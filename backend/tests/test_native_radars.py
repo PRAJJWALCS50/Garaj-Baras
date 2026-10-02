@@ -115,6 +115,16 @@ class NativeRadarTests(unittest.TestCase):
         one['frame_data'].append(('next.png', TIME + timedelta(minutes=10)))
         self.assertTrue(_forecast_ready('mahabaleshwar', one))
 
+    def test_slow_cold_start_returns_retryable_response(self):
+        from main import nowcast_location, NowcastRequest
+        from fastapi import HTTPException
+        with patch('main._load_sohra_radar_state', return_value={'clutter_mask': None}), patch(
+                'main._touch_radar_and_evict'):
+            with self.assertRaises(HTTPException) as exc:
+                nowcast_location(NowcastRequest(lat=25.5788, lon=91.8933))
+        self.assertEqual(exc.exception.status_code, 503)
+        self.assertIn('warming up', exc.exception.detail)
+
 
 if __name__ == '__main__':
     unittest.main()

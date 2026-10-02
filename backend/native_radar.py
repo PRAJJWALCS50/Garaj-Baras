@@ -117,12 +117,20 @@ def decode_reflectivity(image, station):
     if timestamp > datetime.now(IST) + timedelta(minutes=5):
         raise ValueError('Future radar frame')
     crop = arr[box[1]:box[3], box[0]:box[2]]
-    normalized = np.zeros_like(crop)
     # Exact GIF palette membership avoids turning terrain colours, rivers,
     # coastlines and grey no-data into rain. No broad RGB distance heuristic.
-    for color, dbz in zip(colors, values):
-        if dbz >= 20:
-            normalized[(crop == color).all(axis=2)] = _canonical_color(dbz)
+    # Sorted packed-RGB lookup avoids 31 full-image comparisons per frame on
+    # Render's small CPU allocation, without a 48 MB dense RGB lookup table.
+    palette = np.array(colors, dtype=np.uint32)
+    keys = (palette[:, 0] << 16) | (palette[:, 1] << 8) | palette[:, 2]
+    order = keys.argsort()
+    keys = np.r_[keys[order], np.uint32(1 << 24)]
+    mapped = np.array([_canonical_color(values[i]) for i in order] + [(0, 0, 0)], dtype=np.uint8)
+    pixels = crop.astype(np.uint32)
+    packed = (pixels[:, :, 0] << 16) | (pixels[:, :, 1] << 8) | pixels[:, :, 2]
+    indices = np.searchsorted(keys, packed)
+    normalized = mapped[indices]
+    normalized[keys[indices] != packed] = 0
     radius = range_km / KM_PER_PX
     center = int(np.ceil(radius))
     yy, xx = np.mgrid[:2 * center + 1, :2 * center + 1]
@@ -157,10 +165,16 @@ class NativeRadarFeed:
         self.folder.mkdir(exist_ok=True)
         frames = {ts: path for path, ts in self.history()}
         accepted = 0
+        previous = None
         with Image.open(gif_path) as gif:
             for frame in ImageSequence.Iterator(gif):
+                full = frame.convert('RGB')
+                content = full.tobytes()
+                if content == previous:
+                    continue
+                previous = content
                 try:
-                    image, ts = decode_reflectivity(frame.convert('RGB'), self.station)
+                    image, ts = decode_reflectivity(full, self.station)
                 except ValueError:
                     continue
                 name = f'frame_{ts.strftime("%Y%m%d_%H%M%S")}.png'

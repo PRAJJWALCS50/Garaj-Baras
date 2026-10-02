@@ -159,6 +159,12 @@ and station-centered AEQD geometry at the engine's physical scale (0.877 km/px).
 The two native products therefore share every existing rain/motion/decay/scene/
 route/alert consumer without accidentally interpreting native white as 60 dBZ.
 
+Native extraction skips byte-identical padded frames before decoding. A sorted
+24-bit RGB lookup replaces repeated full-image palette comparisons and avoids a
+large dense colour table. Native load functions return a shallow state snapshot,
+and refreshes update the LRU access time. Slow cold starts return a retryable 503
+instead of accessing a missing movement field.
+
 Six real observations are persisted in `frames_<station>/history.json` with
 unique timestamp filenames, merged across animation/current images, deduplicated,
 and restricted to six hours relative to the latest valid observation. Sohra's

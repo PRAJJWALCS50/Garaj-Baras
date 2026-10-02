@@ -1336,6 +1336,7 @@ def _do_sohra_refresh(ttl_sec: float, force: bool = False) -> None:
             "roi_mask": roi_mask,
             "decay_tracks": decay_tracks,
             "last_loaded": time.time(),
+            "last_used": time.time(),
             "gif_mtime": os.path.getmtime(sohra_gif) if os.path.exists(sohra_gif) else None,
         }
         with _sohra_state_lock:
@@ -1358,11 +1359,11 @@ def _load_sohra_radar_state(ttl_sec: float = RADAR_CACHE_TTL_SEC, *, force: bool
     if not _sohra_ready.is_set():
         threading.Thread(target=_do_sohra_refresh, args=(ttl_sec, True), daemon=True).start()
         _sohra_ready.wait(timeout=60)
-        return sohra_cache
+        return dict(sohra_cache)
     if not force and _is_fresh(sohra_cache, ttl_sec):
-        return sohra_cache
+        return dict(sohra_cache)
     threading.Thread(target=_do_sohra_refresh, args=(ttl_sec, force), daemon=True).start()
-    return sohra_cache
+    return dict(sohra_cache)
 
 
 def _do_mahabaleshwar_refresh(ttl_sec: float, force: bool = False) -> None:
@@ -1443,6 +1444,7 @@ def _do_mahabaleshwar_refresh(ttl_sec: float, force: bool = False) -> None:
             "roi_mask": roi_mask,
             "decay_tracks": decay_tracks,
             "last_loaded": time.time(),
+            "last_used": time.time(),
             "gif_mtime": os.path.getmtime(mahabaleshwar_gif) if os.path.exists(mahabaleshwar_gif) else None,
         }
         with _mahabaleshwar_state_lock:
@@ -1465,11 +1467,11 @@ def _load_mahabaleshwar_radar_state(ttl_sec: float = RADAR_CACHE_TTL_SEC, *, for
     if not _mahabaleshwar_ready.is_set():
         threading.Thread(target=_do_mahabaleshwar_refresh, args=(ttl_sec, True), daemon=True).start()
         _mahabaleshwar_ready.wait(timeout=60)
-        return mahabaleshwar_cache
+        return dict(mahabaleshwar_cache)
     if not force and _is_fresh(mahabaleshwar_cache, ttl_sec):
-        return mahabaleshwar_cache
+        return dict(mahabaleshwar_cache)
     threading.Thread(target=_do_mahabaleshwar_refresh, args=(ttl_sec, force), daemon=True).start()
-    return mahabaleshwar_cache
+    return dict(mahabaleshwar_cache)
 
 
 # ── Radar registry + alert plumbing ───────────────────────────────────────────
@@ -2265,8 +2267,10 @@ def nowcast_location(req: NowcastRequest):
                 "total_events": 0,
             }
 
-        dx, dy, _dir_from, _dir_to, _speed = state["movement"]
         latest_frame = state.get("latest_frame")
+        if not latest_frame or not state.get("movement"):
+            raise HTTPException(status_code=503, detail="Radar is warming up. Please try again shortly.")
+        dx, dy, _dir_from, _dir_to, _speed = state["movement"]
         lag_info = _fresh_lag_info(state)
         lag_mins = float(lag_info.get("lag_mins", DEFAULT_RADAR_LAG_MINS))
         patch_tracks = state.get("decay_tracks") or []
