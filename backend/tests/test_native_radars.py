@@ -28,6 +28,7 @@ class NativeRadarTests(unittest.TestCase):
 
     def test_sohra_explicit_date_and_time(self):
         with Image.open(FIXTURES / 'sohra.png') as image:
+            image = image.convert('RGB')
             ts = sohra_timestamp(image)
             self.assertEqual(ts.astimezone(timezone.utc).isoformat(), '2026-10-02T10:48:38+00:00')
             # A damaged digit is rejected rather than receiving today's time.
