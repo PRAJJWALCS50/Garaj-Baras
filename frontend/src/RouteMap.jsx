@@ -202,6 +202,8 @@ export default function RouteMap({
   const isLive = !!livePos
   const [rainLayerOn, setRainLayerOn] = useState(true)
   const [fogLayerOn, setFogLayerOn] = useState(true)
+  const [fogOptionsOpen, setFogOptionsOpen] = useState(false)
+  const [fogSource, setFogSource] = useState(null)
   const showRain = navMode ? weatherMode !== 'fog' : rainLayerOn
   const showFog = navMode ? weatherMode === 'fog' : fogLayerOn
   const [headingUp, setHeadingUp] = useState(true)
@@ -622,28 +624,61 @@ export default function RouteMap({
         <button
           type="button"
           className={`map-layer-btn${showRain ? ' is-on' : ''}`}
-          onClick={() => navMode ? onWeatherModeChange?.('rain') : setRainLayerOn((v) => !v)}
+          onClick={() => {
+            setFogOptionsOpen(false)
+            if (navMode) onWeatherModeChange?.('rain')
+            else setRainLayerOn((v) => !v)
+          }}
           aria-pressed={showRain}
           title={t('Rain forecast coloring', 'बारिश पूर्वानुमान रंग')}
         >
           🌧 <span>{t('Rain', 'बारिश')}</span>
         </button>
-        <button
-          type="button"
-          className={`map-layer-btn${showFog ? ' is-on' : ''}`}
-          onClick={() => {
-            if (navMode) {
-              setActiveStop(null)
-              setActiveSeg?.(null)
-              onWeatherModeChange?.('fog')
-            } else setFogLayerOn((v) => !v)
-          }}
-          aria-pressed={showFog}
-          title={t('Fog / low visibility', 'कोहरा / कम दृश्यता')}
-        >
-          🌫 <span>{t('Fog', 'कोहरा')}</span>
-          {fogLines.length > 0 && <i className="map-layer-btn__dot" aria-hidden />}
-        </button>
+        <div className="fog-control">
+          <button
+            type="button"
+            className={`map-layer-btn${showFog ? ' is-on' : ''}`}
+            onClick={() => {
+              setFogOptionsOpen((open) => !open)
+            }}
+            aria-expanded={fogOptionsOpen}
+            aria-label={t('Fog sources', 'कोहरे के स्रोत')}
+            title={t('Fog / low visibility', 'कोहरा / कम दृश्यता')}
+          >
+            🌫 <span>{t('Fog', 'कोहरा')}</span>
+          </button>
+          {fogOptionsOpen && (
+            <div className="fog-options" role="group" aria-label={t('Fog source', 'कोहरे का स्रोत')}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setFogOptionsOpen(false)
+                  event.currentTarget.parentElement.querySelector('button').focus()
+                }
+              }}>
+              <span className="fog-options__title">{t('Fog', 'कोहरा')}</span>
+              {[
+                { id: 'satellite', label: t('Satellite', 'सैटेलाइट') },
+                { id: 'ecmwf', label: 'ECMWF' },
+                { id: 'our-model', label: t('Our Model', 'हमारा मॉडल') },
+              ].map((source) => (
+                <button type="button" key={source.id}
+                  className={`fog-options__button${fogSource === source.id ? ' is-selected' : ''}`}
+                  aria-pressed={fogSource === source.id}
+                  onClick={() => {
+                    setFogSource(source.id)
+                    setActiveStop(null)
+                    setActiveSeg?.(null)
+                    if (navMode) onWeatherModeChange?.('fog')
+                    else setFogLayerOn(true)
+                  }}>
+                  {source.label}
+                  {fogSource === source.id && <span aria-hidden>✓</span>}
+                </button>
+              ))}
+              {fogSource && <p className="fog-options__status" role="status">{t('No fog', 'कोहरा नहीं')}</p>}
+            </div>
+          )}
+        </div>
         {navMode && (
           <button type="button" className="map-layer-btn" onClick={showOverview} title={t('See the whole route', 'पूरा रास्ता देखें')}>
             <span aria-hidden>⤢</span> <span>{t('Overview', 'पूरा रास्ता')}</span>

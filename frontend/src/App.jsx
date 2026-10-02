@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
-import { fetchRouteFog, fogZones, fmtVisibility } from './fog'
+import { fogZones, fmtVisibility } from './fog'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
 import './App.css'
 import { useAuth, AccountButton, SignInGate } from './auth'
@@ -22,7 +22,6 @@ const ORS_KEY = import.meta.env.VITE_ORS_API_KEY
 
 const RouteMap = lazy(() => import('./RouteMap.jsx'))
 const LiveJourneyPanel = lazy(() => import('./LiveJourney.jsx'))
-const IndiaRadarMap = lazy(() => import('./IndiaRadarMap.jsx'))
 
 function warmBackend() {
   try {
@@ -521,24 +520,12 @@ function TabBar({ activeTab, onChangeTab }) {
       >
         {t('Ask AI', 'AI से पूछें')}
       </button>
-      <button role="tab" aria-selected={activeTab === 'india-radar'} className={`tab-bar__btn${activeTab === 'india-radar' ? ' tab-bar__btn--active' : ''}`} onClick={() => onChangeTab('india-radar')}>India Radar</button>
     </div>
   )
 }
 
 // ── Ask AI (rain chatbot) ──────────────────────────────────────────────────────
 const CHAT_URL = `${API_BASE}/chat`
-
-function IndiaRadarPage({ activeTab, onChangeTab, onPickSaved }) {
-  return (
-    <div className="pg-india-radar">
-      <nav className="nav"><span className="nav__brand">GARAJ BARAS</span><span className="nav__right"><LangToggle /><AccountButton /><SavedMenu apiBase={API_BASE} onPick={onPickSaved} /></span></nav>
-      <TabBar activeTab={activeTab} onChangeTab={onChangeTab} />
-      <section className="india-radar-hero"><p className="eyebrow">NATIONAL RADAR NETWORK</p><h1>India Radar Mosaic</h1><p>One live view, blended from every available IMD radar. Coverage outlines show where observations are available.</p></section>
-      <Suspense fallback={<div className="india-radar-loading">Loading India radar…</div>}><IndiaRadarMap /></Suspense>
-    </div>
-  )
-}
 
 const toolLabel = (key) => ({
   geocode_place: tr('Finding location…', 'स्थान खोजा जा रहा है…'),
@@ -2104,7 +2091,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('route')
   // Tabs mount on first visit and then stay mounted (hidden with CSS) so
   // their state survives tab switches. Route mounts immediately (default tab).
-  const [visitedTabs, setVisitedTabs] = useState({ route: true, nowcast: false, chat: false, 'india-radar': false })
+  const [visitedTabs, setVisitedTabs] = useState({ route: true, nowcast: false, chat: false })
   const [pendingNcLoc, setPendingNcLoc] = useState(null)  // saved place → Nowcast
 
   // First-run onboarding: shown until dismissed once; re-openable from the
@@ -2154,7 +2141,7 @@ export default function App() {
   const routeLonLatRef = useRef(null)    // ORS geometry ([lon,lat]) for recoloring
   const liveSpeedRef = useRef(null)      // planned avg speed (km/h)
   const [routeSteps, setRouteSteps] = useState([]) // ORS turn-by-turn maneuvers
-  const [routeFog, setRouteFog] = useState(null)   // Open-Meteo visibility along the route
+  const [routeFog] = useState([]) // Placeholder until fog sources are integrated
   const [showSteps, setShowSteps] = useState(false)
   const [shareNote, setShareNote] = useState(null)
 
@@ -2307,7 +2294,6 @@ export default function App() {
       setLivePos(null)
       setJourneyStop(null)
       setRouteSteps(steps)
-      setRouteFog(null)
       setRouteCoords(routeLonLat.map(([lon, lat]) => [lat, lon]))
       setResult({
         total_waypoints: sampled.length, rain_waypoints: 0, clear_waypoints: sampled.length,
@@ -2335,10 +2321,6 @@ export default function App() {
 
       setRouteSegments(buildColoredSegments(routeLonLat, mergedWaypoints))
       setResult({ ...predictRes.data, route_distance_km: totalKm, waypoints: mergedWaypoints })
-      // fog is optional — never block or fail the route on it
-      fetchRouteFog(mergedWaypoints)
-        .then((fog) => { if (routeLonLatRef.current === routeLonLat) setRouteFog(fog) })
-        .catch(() => {})
       if ((predictRes.data?.radar_lag_mins ?? 0) > 75) {
         setRadarDown(true)
       }
@@ -2404,16 +2386,6 @@ export default function App() {
       }
     } catch { /* user cancelled */ }
   }
-
-  // While navigating, refresh the fog picture every 20 min (visibility
-  // forecasts are hourly, so this is plenty).
-  useEffect(() => {
-    if (!liveActive) return
-    const id = setInterval(() => {
-      fetchRouteFog(result?.waypoints || []).then(setRouteFog).catch(() => {})
-    }, 20 * 60 * 1000)
-    return () => clearInterval(id)
-  }, [liveActive]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lock page scroll behind the full-screen navigation view
   useEffect(() => {
@@ -2511,7 +2483,7 @@ export default function App() {
     endLiveJourney()
     setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null); setShowBreakdown(false)
-    setRadarDown(false); setRouteSteps([]); setRouteFog(null)
+    setRadarDown(false); setRouteSteps([])
   }
 
   function handleTabChange(tab) {
@@ -2547,12 +2519,6 @@ export default function App() {
             pendingLoc={pendingNcLoc}
             onPendingConsumed={() => setPendingNcLoc(null)}
           />
-        </div>
-      )}
-
-      {visitedTabs['india-radar'] && (
-        <div style={{ display: activeTab === 'india-radar' ? '' : 'none' }}>
-          <IndiaRadarPage activeTab={activeTab} onChangeTab={handleTabChange} onPickSaved={onPickSaved} />
         </div>
       )}
 
@@ -2598,7 +2564,7 @@ export default function App() {
 
               <section className="hero">
                 <div className="hero__glow" aria-hidden />
-                <h1 className="hero__title">{t('Know the rain', 'बारिश जानें')}<br />{t('before you leave.', 'निकलने से पहले।')}</h1>
+                <h1 className="hero__title">{t('Know the weather conditions', 'मौसम की स्थिति जानें')}<br />{t('before you leave.', 'निकलने से पहले।')}</h1>
                 <button
                   type="button"
                   className="hero__how"
