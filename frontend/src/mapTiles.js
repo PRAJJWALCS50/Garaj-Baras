@@ -18,7 +18,7 @@ function mapboxLayer(styleId) {
   }
 }
 
-/** kind: 'route' (dark results map) | 'nav' (turn-by-turn) | 'light' (India radar) */
+/** kind: 'route' (dark results map) | 'nav' (turn-by-turn) | 'light' (light maps) */
 export function baseTiles(kind) {
   if (MAPBOX_TOKEN) {
     if (kind === 'nav') return mapboxLayer('dark-v11') // muted; route is the only bright thing
