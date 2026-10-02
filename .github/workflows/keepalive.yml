@@ -1,6 +1,6 @@
 name: Rain alert wake and sweep
 
-# Two staggered schedules:
+# Three schedules:
 # 1) /health every 5 minutes to wake/keep Render warm.
 # 2) /tasks/sweep_alerts every 10 minutes, offset by +2 minutes, so the sweep
 #    is less likely to be the cold-start request that times out at the cron
@@ -13,6 +13,9 @@ on:
   schedule:
     - cron: "*/5 * * * *"
     - cron: "2,12,22,32,42,52 * * * *"
+    # 3) IMD district warnings (North India) into the DB, after IMD's
+    #    00/06/12 UTC issues (08:00, 14:00, 20:00 IST).
+    - cron: "30 2,8,14 * * *"
   workflow_dispatch:
 
 jobs:
@@ -33,3 +36,12 @@ jobs:
         run: |
           curl -s -m 120 -w "sweep: %{http_code}\n" \
             "https://garaj-baras-api.onrender.com/tasks/sweep_alerts?token=${{ secrets.SWEEP_TOKEN }}" || true
+
+  imd-warnings:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 2,8,14 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch IMD district warnings
+        run: |
+          curl -s -m 120 -w "imd: %{http_code}\n" \
+            "https://garaj-baras-api.onrender.com/tasks/fetch_imd_warnings?token=${{ secrets.SWEEP_TOKEN }}" || true

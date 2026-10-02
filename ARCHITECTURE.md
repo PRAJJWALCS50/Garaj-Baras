@@ -688,6 +688,16 @@ anywhere**; ignore it. `dist/` is a committed production build.
   refreshes; both superseded by LRU eviction + background-refresh design
   described above).
 
+## IMD upload validation
+
+The frontend prebuild runs `scripts/check_imd_package.mjs` to require the complete
+10-file IMD package, nonempty district polygons, backend endpoints, frontend
+imports/card, and scheduled refresh. `.github/workflows/imd-checks.yml` runs the
+same validation on pushes to main and pull requests, tests district lookup and
+warning dates offline, compiles the backend modules, and builds the frontend.
+After uploading a feature, verify its complete file list in the remote commit
+before deploying; a documentation-only commit does not contain the implementation.
+
 ## 12. Running locally
 
 ```powershell

@@ -2,6 +2,8 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
 import { fogZones, fmtVisibility } from './fog'
+import { fetchRouteImdWarnings } from './imdWarnings'
+import { ImdRouteWarnings } from './ImdRouteWarnings'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
 import './App.css'
 import { useAuth, AccountButton, SignInGate } from './auth'
@@ -2142,6 +2144,7 @@ export default function App() {
   const liveSpeedRef = useRef(null)      // planned avg speed (km/h)
   const [routeSteps, setRouteSteps] = useState([]) // ORS turn-by-turn maneuvers
   const [routeFog] = useState([]) // Placeholder until fog sources are integrated
+  const [routeImd, setRouteImd] = useState(null)   // IMD district warnings on the route
   const [showSteps, setShowSteps] = useState(false)
   const [shareNote, setShareNote] = useState(null)
 
@@ -2294,6 +2297,12 @@ export default function App() {
       setLivePos(null)
       setJourneyStop(null)
       setRouteSteps(steps)
+      setRouteImd(null)
+      // IMD district warnings only need the sampled waypoints, so fetch them
+      // alongside the radar scan; optional — never block or fail the route
+      fetchRouteImdWarnings(API_BASE, sampled)
+        .then((imd) => { if (routeLonLatRef.current === routeLonLat) setRouteImd(imd) })
+        .catch(() => {})
       setRouteCoords(routeLonLat.map(([lon, lat]) => [lat, lon]))
       setResult({
         total_waypoints: sampled.length, rain_waypoints: 0, clear_waypoints: sampled.length,
@@ -2483,7 +2492,7 @@ export default function App() {
     endLiveJourney()
     setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null); setShowBreakdown(false)
-    setRadarDown(false); setRouteSteps([])
+    setRadarDown(false); setRouteSteps([]); setRouteImd(null)
   }
 
   function handleTabChange(tab) {
@@ -2952,6 +2961,9 @@ export default function App() {
                   onToggleBreakdown={() => setShowBreakdown((s) => !s)}
                 />
               )}
+
+              {/* IMD district warnings on the route */}
+              <ImdRouteWarnings data={routeImd} t={t} />
 
               {liveActive && !result._pending && routeCoords.length >= 2 && createPortal(
                 <div className="nav-screen" role="dialog" aria-label={t('Navigation', 'नेविगेशन')}>

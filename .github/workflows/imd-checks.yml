@@ -1,0 +1,35 @@
+name: IMD package checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify complete IMD package and wiring
+        run: node scripts/check_imd_package.mjs
+      - name: Test district lookup and warning dates
+        run: |
+          python -m pip install requests
+          python -m py_compile backend/main.py backend/imd_warnings.py
+          python -m unittest discover -s backend/tests -p 'test_imd_warnings.py'
+      - name: Build frontend including warning card
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build

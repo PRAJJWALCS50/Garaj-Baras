@@ -30,6 +30,7 @@ from decay import compute_decay_tracks, get_decay_status_at_pixel  # type: ignor
 import verification  # type: ignore
 import alerts  # type: ignore
 import journeys  # type: ignore
+import imd_warnings  # type: ignore
 import accounts  # type: ignore
 from auth import get_current_user, get_optional_user  # type: ignore
 from patches import (  # type: ignore
@@ -2318,6 +2319,35 @@ def tasks_sweep_alerts(token: str = ""):
         raise HTTPException(status_code=403, detail="Bad sweep token.")
     threading.Thread(target=_sweep_alerts_bg, daemon=True).start()
     return {"ok": True, "status": "sweep_queued"}
+
+
+@app.get("/tasks/fetch_imd_warnings")
+def tasks_fetch_imd_warnings(token: str = ""):
+    """Scheduled fetch of IMD district warnings (North India) into the DB.
+    Called by the keep-alive workflow a few times a day; gated by SWEEP_TOKEN
+    when set. Route lookups also lazily refresh data older than 6 h."""
+    expected = (os.environ.get("SWEEP_TOKEN") or "").strip()
+    if expected and token != expected:
+        raise HTTPException(status_code=403, detail="Bad sweep token.")
+    threading.Thread(target=imd_warnings.refresh_bg, daemon=True).start()
+    return {"ok": True, "status": "fetch_queued"}
+
+
+class ImdRouteRequest(BaseModel):
+    waypoints: List[WaypointInput]
+
+
+@app.post("/imd_warnings/route")
+def imd_warnings_route(payload: ImdRouteRequest):
+    """IMD warnings on your route: unique districts along the waypoints with
+    today's and tomorrow's district warnings (only districts with a warning)."""
+    try:
+        return imd_warnings.route_warnings(
+            (wp.lat, wp.lon, wp.eta_mins) for wp in payload.waypoints
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"IMD warning lookup failed: {e}")
 
 
 @app.get("/alerts/debug")
