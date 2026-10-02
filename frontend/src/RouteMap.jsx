@@ -659,7 +659,7 @@ export default function RouteMap({
               {[
                 { id: 'satellite', label: t('Satellite', 'सैटेलाइट') },
                 { id: 'ecmwf', label: 'ECMWF' },
-                { id: 'our-model', label: t('Our Model', 'हमारा मॉडल') },
+                { id: 'general-model', label: t('General Model', 'सामान्य मॉडल') },
               ].map((source) => (
                 <button type="button" key={source.id}
                   className={`fog-options__button${fogSource === source.id ? ' is-selected' : ''}`}

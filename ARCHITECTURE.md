@@ -87,7 +87,7 @@ Garaj Baras/
 │   └── debug_*.png, *_verify*.png ← throwaway debug images (ignore)
 ├── frontend/
 │   ├── src/App.jsx              ← ~1900 lines; entire app UI: tabs, route page, nowcast page, chat page
-│   ├── src/RouteMap.jsx         ← lazy-loaded Leaflet map: colored route segments + animated journey car + rain toggle + Satellite/ECMWF/Our Model fog chooser; `navMode` = full-screen heading-up nav map (leaflet-rotate)
+│   ├── src/RouteMap.jsx         ← lazy-loaded Leaflet map: colored route segments + animated journey car + rain toggle + Satellite/ECMWF/General Model fog chooser; `navMode` = full-screen heading-up nav map (leaflet-rotate)
 │   ├── src/LiveJourney.jsx      ← navigation UI: GPS tracking, ORS turn-by-turn card, speed/ETA bar, rain + fog chips, 5-min radar re-sync, journey-guardian registration
 │   ├── src/fog.js               ← visibility formatting/zone helpers; legacy fetch helper is unused while fog sources are placeholders
 │   ├── src/mapTiles.js          ← base-map tiles: Mapbox (dark-v11 for route + nav, light-v11 for light maps; route maps dim/desaturate tiles via CSS so only the cased route line stands out) when MAPBOX_ACCESS_TOKEN is set (root .env, injected by vite.config.js), else CARTO/OSM fallback
@@ -594,7 +594,7 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   subscribes to push via `/alerts/subscribe` with the auth header) and
   `SavedPlaces.jsx` (CRUD on `/locations`; tapping a place loads it into the
   nowcast picker).
-- **Fog controls:** the right-side map control offers Satellite, ECMWF, and Our Model. Each selection displays "No fog" using empty placeholder data; no visibility fetch or refresh runs until source integration is added. India Radar is removed from the frontend; backend mosaic endpoints remain available.
+- **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. Each selection displays "No fog" using empty placeholder data; no visibility fetch or refresh runs until source integration is added. India Radar is removed from the frontend; backend mosaic endpoints remain available.
 - **Chat tab (`ChatPage`):** streams `/chat` SSE, shows tool-call status.
   Gated behind sign-in (`SignInGate`).
 - **Auth (`auth.jsx` + `supabase.js`):** `AuthProvider` context (session,
