@@ -11,11 +11,19 @@ const required = [
   'backend/data/imd_north_districts.geojson', 'frontend/src/App.jsx',
   'frontend/src/App.css', 'frontend/src/imdWarnings.js',
   'frontend/src/ImdRouteWarnings.jsx',
+  'backend/native_radar.py', 'backend/georef_native.py', 'backend/sohra_digits.json',
+  'backend/radar_sohra.py', 'backend/georef_sohra.py',
+  'backend/radar_mahabaleshwar.py', 'backend/georef_mahabaleshwar.py',
 ]
 const missing = required.filter(path => !existsSync(resolve(root, path)))
 assert.equal(missing.length, 0, `Incomplete IMD upload: ${missing.join(', ')}`)
 const read = path => readFileSync(resolve(root, path), 'utf8')
 const main = read('backend/main.py')
+for (const station of ['sohra', 'mahabaleshwar']) {
+  assert(main.includes(`import radar_${station}`) && main.includes(`import georef_${station}`))
+  assert(main.includes(`"${station}":  {"refresh": _do_${station}_refresh`), `Missing ${station} registry`)
+  assert(main.includes(`elif radar == "${station}"`), `Missing ${station} dispatch`)
+}
 assert.match(main, /^import imd_warnings\b/m, 'Backend does not load IMD warnings')
 assert(main.includes('@app.post("/imd_warnings/route")'), 'IMD route endpoint is missing')
 assert(main.includes('@app.get("/tasks/fetch_imd_warnings")'), 'IMD refresh endpoint is missing')

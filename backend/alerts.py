@@ -344,6 +344,8 @@ def process_alerts(radar_name: str, state: dict, is_within_radar, latlon_to_pixe
     `only_endpoint`: when set, checks just that one subscription (used by the
     instant check fired the moment a user enables alerts).
     """
+    if radar_name in ("sohra", "mahabaleshwar") and len(state.get("frame_data") or []) < 2:
+        return
     try:
         init_db()
         with _db_lock, _conn() as c:

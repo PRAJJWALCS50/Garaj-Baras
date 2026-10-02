@@ -36,6 +36,20 @@ VIEW_RADIUS_PX = PATCH_SEARCH_RADIUS_PX // 2
 # Notable places per radar, drawn as labels on the frontend canvas (like the
 # city abbreviations on IMD's own frames, but full readable names).
 PLACES = {
+    "sohra": [
+        ("Sohra", 25.2680, 91.7332), ("Shillong", 25.5788, 91.8933),
+        ("Guwahati", 26.1445, 91.7362), ("Jowai", 25.4500, 92.2000),
+        ("Dawki", 25.1840, 92.0180), ("Nongstoin", 25.5170, 91.2670),
+        ("Tura", 25.5140, 90.2020), ("Tezpur", 26.6528, 92.7926),
+        ("Silchar", 24.8333, 92.7789), ("Agartala", 23.8315, 91.2868),
+    ],
+    "mahabaleshwar": [
+        ("Mahabaleshwar", 17.9217, 73.6556), ("Pune", 18.5204, 73.8567),
+        ("Satara", 17.6805, 74.0183), ("Wai", 17.9520, 73.8900),
+        ("Panchgani", 17.9240, 73.8010), ("Karad", 17.2860, 74.1840),
+        ("Ratnagiri", 16.9902, 73.3120), ("Kolhapur", 16.7050, 74.2433),
+        ("Chiplun", 17.5320, 73.5090), ("Mumbai", 19.0760, 72.8777),
+    ],
     "delhi": [
         ("Delhi", 28.6139, 77.2090), ("Noida", 28.5355, 77.3910),
         ("Gurugram", 28.4595, 77.0266), ("Faridabad", 28.4089, 77.3178),

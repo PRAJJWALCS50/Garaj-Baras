@@ -12,6 +12,8 @@ env/
 *.gif
 *.png
 backend/frames/
+backend/frames_sohra/
+backend/frames_mahabaleshwar/
 backend/delhi_radar.gif
 
 # Debug files
@@ -36,6 +38,7 @@ backend/verification.db*
 
 # Timestamp glyph templates (required at runtime, tiny)
 !backend/ts_templates/*.png
+!backend/tests/fixtures/*.png
 
 # PWA app icons (required assets, tiny)
 !frontend/public/*.png

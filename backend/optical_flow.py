@@ -146,7 +146,7 @@ def get_movement_vector(frame_data, clutter_mask=None):
     Returns: (mean_dx, mean_dy, direction_from, direction_to, speed_kmh)
     """
     if len(frame_data) < 2:
-        return (0.0, 0.0, "N", "S", 0.0)
+        return (0.0, 0.0, "Unknown", "Unknown", 0.0)
 
     valid_vectors = []  # (dx_10, dy_10, speed_kmh)
 
