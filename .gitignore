@@ -42,6 +42,7 @@ backend/verification.db*
 
 # Rain alert runtime data + dev push keys
 backend/alerts.db*
+backend/imd_warnings.db*
 backend/vapid_keys.json
 
 # local secrets

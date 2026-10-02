@@ -6,7 +6,7 @@
 > deployment, and operational constraints. Only open source files when you need
 > the exact implementation of something specific.
 >
-> Last updated: 2026-09-29.
+> Last updated: 2026-10-02.
 
 ---
 
@@ -75,6 +75,8 @@ Garaj Baras/
 │   ├── timestamp_match.py       ← digit template-matching timestamp reader (prod, no Tesseract)
 │   ├── alerts.py                ← web-push rain alerts, SQLite alerts.db, state machine
 │   ├── journeys.py              ← "journey guardian": server-side dead-reckoned rain watch for live journeys (push warnings while the phone screen is off)
+│   ├── imd_warnings.py          ← IMD district warnings (North India): fetch/store from IMD GeoServer WFS + waypoint→district point-in-polygon for "IMD warnings on your route"
+│   ├── data/imd_north_districts.geojson ← IMD district polygons (North India states), keyed by IMD district ID
 │   ├── verification.py          ← prediction logging + auto-grading, SQLite verification.db, POD/FAR/CSI
 │   ├── chatbot.py               ← Gemini/Groq chatbot with function calling, SSE streaming
 │   ├── cloud_cover.py           ← Open-Meteo cloud-cover cross-check (utility; NOT currently imported by the pipeline)
@@ -90,6 +92,8 @@ Garaj Baras/
 │   ├── src/RouteMap.jsx         ← lazy-loaded Leaflet map: colored route segments + animated journey car + rain toggle + Satellite/ECMWF/General Model fog chooser; `navMode` = full-screen heading-up nav map (leaflet-rotate)
 │   ├── src/LiveJourney.jsx      ← navigation UI: GPS tracking, ORS turn-by-turn card, speed/ETA bar, rain + fog chips, 5-min radar re-sync, journey-guardian registration
 │   ├── src/fog.js               ← visibility formatting/zone helpers; legacy fetch helper is unused while fog sources are placeholders
+│   ├── src/imdWarnings.js       ← POST waypoints to `/imd_warnings/route` (optional, failures silent)
+│   ├── src/ImdRouteWarnings.jsx ← "IMD warnings on your route" card on the results screen (today + tomorrow, Hindi/English)
 │   ├── src/mapTiles.js          ← base-map tiles: Mapbox (dark-v11 for route + nav, light-v11 for light maps; route maps dim/desaturate tiles via CSS so only the cased route line stands out) when MAPBOX_ACCESS_TOKEN is set (root .env, injected by vite.config.js), else CARTO/OSM fallback
 │   ├── src/maneuvers.jsx        ← ORS maneuver icons/text/distance helpers shared by the route card + navigation
 │   ├── src/leafletSetup.js      ← exposes window.L before `leaflet-rotate` loads (the plugin patches the global)
@@ -409,6 +413,33 @@ Streams SSE: `{"type":"text"|"tool"|"done"|"error"}`. System prompt enforces:
 never judge coverage from a place name — always call get_nowcast and trust
 `in_radar_bounds`.
 
+### IMD warnings on your route (imd_warnings.py)
+IMD's district warning map (`mausam.imd.gov.in/responsive/districtWiseWarningGIS.php`)
+is backed by IMD's GeoServer: WFS `imd:district_warnings_india` at
+`reactjs.imd.gov.in/geoserver/wfs` (keyless, no CORS header → fetched by the
+backend). One attributes-only request (~370 KB) returns every district with
+5 days: `Day_N` = comma-separated hazard codes (1 no warning, 2 heavy rain,
+3 heavy snow, 4 thunderstorm & lightning, 5 hail, 6 dust storm, 7 dust-raising
+winds, 8 strong surface winds, 9 heat wave, 10 hot day, 11 warm night, 12 cold
+wave, 13 cold day, 14 ground frost, 15 fog, 16 very heavy, 17 extremely heavy
+rain — from the page's own `getWarning()` table) and `DayN_Color` (1 red
+Warning, 2 orange Alert, 3 yellow Watch, 4 green none). The official
+`/api/warnings_district_api.php` is IP-whitelisted, so it is not used.
+- **Store:** `refresh()` upserts the North India districts (IDs present in
+  `data/imd_north_districts.geojson`: J&K, Ladakh, HP, Punjab, Chandigarh,
+  Haryana, Delhi, Uttarakhand, UP, Rajasthan) into table
+  `imd_district_warnings` (Postgres in prod via db.py, `imd_warnings.db` in
+  dev): issue date, 5 days of codes+colour as JSON. Triggered by
+  `/tasks/fetch_imd_warnings` (keep-alive workflow, 02:30/08:30/14:30 UTC) and
+  lazily by route lookups (synchronous when empty, background when >6 h old).
+- **Day shift:** districts are not all re-issued daily, and `Day_1` refers to
+  each record's own `Date`, so the day index = target date − issue date.
+- **Route lookup:** `route_warnings()` maps each waypoint to a district by
+  point-in-polygon (bbox prefilter, previous district checked first), keeps
+  unique districts in driving order, and returns today's + tomorrow's (IST)
+  hazards for districts warned on either day. Waypoints outside the covered
+  states count as `uncovered_waypoints`.
+
 ## 8. Georeferencing (georef*.py)
 
 Per radar, a **quadratic** fit (`px = c0 + c1·lat + c2·lon + c3·lat·lon +
@@ -470,6 +501,8 @@ reusing any GCP numbers.
 | `/alerts/vapid_public_key` | GET | Push public key |
 | `/alerts/subscribe` / `/alerts/unsubscribe` / `/alerts/test` | POST | Push subscription management |
 | `/stats/accuracy?days=` | GET | Verified POD/FAR/CSI |
+| `/imd_warnings/route` | POST | `{waypoints:[{lat,lon,eta_mins}]}` → unique districts on the route with today's + tomorrow's IMD district warnings (warned districts only) |
+| `/tasks/fetch_imd_warnings?token=` | GET | Queue an IMD district-warning fetch into the DB (SWEEP_TOKEN-gated) |
 | `/chat` | POST | Chatbot, SSE stream (frontend gates the tab behind sign-in) |
 | `/me` | GET | **Auth.** Upsert + return the signed-in user |
 | `/locations` | GET/POST | **Auth.** List / add saved locations (cap 10/user) |
