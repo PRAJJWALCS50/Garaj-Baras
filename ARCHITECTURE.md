@@ -672,6 +672,7 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   `SavedPlaces.jsx` (CRUD on `/locations`; tapping a place loads it into the
   nowcast picker).
 - **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. Each selection displays "No fog" using empty placeholder data; no visibility fetch or refresh runs until source integration is added. India Radar is removed from the frontend; backend mosaic endpoints remain available.
+- **Chatbot location lookup (`chatbot.py`):** Nominatim searches are serialized with at least 1.1 seconds between requests. A bounded 256-entry cache keeps successful locations for 24 hours; repeated concurrent searches share the cached result. HTTP 403/429/503 responses start a provider cooldown (Retry-After respected, bounded to 60–3600 seconds). Photon is an India-filtered fallback for rejected, failed, or empty lookups. Errors never become cached locations or invented coordinates. Both providers failing returns a retryable location error. Gemini failures try the remaining keys before Groq; only actual HTTP 429 exhaustion is reported as quota exhaustion, and Groq-only setup does not require the Gemini SDK.
 - **Chat tab (`ChatPage`):** streams `/chat` SSE, shows tool-call status.
   Gated behind sign-in (`SignInGate`).
 - **Auth (`auth.jsx` + `supabase.js`):** `AuthProvider` context (session,
