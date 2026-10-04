@@ -20,6 +20,11 @@ import itertools
 import json
 import os
 import re
+import threading
+import time
+from collections import OrderedDict
+from copy import deepcopy
+from email.utils import parsedate_to_datetime
 
 import httpx  # type: ignore
 
@@ -171,27 +176,100 @@ TOOL_DECLARATIONS = [
 ]
 
 
+_GEOCODE_LOCK = threading.Lock()
+_GEOCODE_CACHE = OrderedDict()
+_GEOCODE_CACHE_LIMIT = 256
+_GEOCODE_TTL = 24 * 60 * 60
+_GEOCODE_LAST_REQUEST = {}
+_GEOCODE_COOLDOWN = {}
+_GEOCODE_INTERVAL = 1.1
+_GEOCODE_PROVIDERS = (
+    ("nominatim", "https://nominatim.openstreetmap.org/search"),
+    ("photon", "https://photon.komoot.io/api/"),
+)
+
+
+def _retry_after_seconds(value):
+    """Respect either Retry-After form, with a bounded provider cooldown."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        try:
+            seconds = parsedate_to_datetime(value).timestamp() - time.time()
+        except (TypeError, ValueError, OverflowError):
+            seconds = 60
+    return min(3600, max(60, seconds))
+
+
+def _geocode_matches(provider, payload):
+    matches = []
+    if provider == "nominatim":
+        for item in payload[:3]:
+            matches.append({"name": item.get("display_name", "")[:120],
+                            "lat": float(item["lat"]), "lon": float(item["lon"])})
+    else:
+        for feature in payload.get("features", [])[:3]:
+            props = feature.get("properties") or {}
+            if str(props.get("countrycode", "")).upper() != "IN":
+                continue
+            lon, lat = feature["geometry"]["coordinates"][:2]
+            labels = dict.fromkeys(str(props[k]) for k in
+                                   ("name", "district", "city", "state", "country")
+                                   if props.get(k))
+            matches.append({"name": ", ".join(labels)[:120],
+                            "lat": float(lat), "lon": float(lon)})
+    return [m for m in matches if 6 <= m["lat"] <= 38 and 68 <= m["lon"] <= 98]
+
+
 def _geocode_place(place_name: str):
-    r = httpx.get(
-        "https://nominatim.openstreetmap.org/search",
-        params={"q": place_name, "format": "json", "limit": 3, "countrycodes": "in"},
-        headers={"User-Agent": "GarajBaras/1.0 (rain nowcast app)"},
-        timeout=10.0,
-    )
-    r.raise_for_status()
-    results = r.json()
-    if not results:
+    query = " ".join(place_name.split())[:200]
+    if not query:
+        return {"matches": [], "note": "Please provide a place name."}
+    cache_key = query.casefold()
+    # Serialize requests and coalesce concurrent identical lookups. This lock
+    # only covers geocoding, never radar work or the rest of the AI stream.
+    with _GEOCODE_LOCK:
+        cached = _GEOCODE_CACHE.get(cache_key)
+        if cached and cached[0] > time.monotonic():
+            _GEOCODE_CACHE.move_to_end(cache_key)
+            return deepcopy(cached[1])
+        _GEOCODE_CACHE.pop(cache_key, None)
+        had_failure = False
+        for provider, url in _GEOCODE_PROVIDERS:
+            now = time.monotonic()
+            if _GEOCODE_COOLDOWN.get(provider, 0) > now:
+                had_failure = True
+                continue
+            delay = _GEOCODE_INTERVAL - (now - _GEOCODE_LAST_REQUEST.get(provider, float("-inf")))
+            if delay > 0:
+                time.sleep(delay)
+            _GEOCODE_LAST_REQUEST[provider] = time.monotonic()
+            params = ({"q": query, "format": "json", "limit": 3, "countrycodes": "in"}
+                      if provider == "nominatim" else
+                      {"q": query, "limit": 3, "countrycode": "IN", "lang": "en"})
+            try:
+                response = httpx.get(url, params=params, timeout=15.0, headers={
+                    "User-Agent": "GarajBaras/1.0 (+https://garaj-baras.vercel.app)",
+                })
+                if response.status_code in (403, 429, 503):
+                    _GEOCODE_COOLDOWN[provider] = time.monotonic() + _retry_after_seconds(
+                        response.headers.get("Retry-After"))
+                response.raise_for_status()
+                matches = _geocode_matches(provider, response.json())
+                if not matches:
+                    continue
+                result = {"matches": matches}
+                _GEOCODE_CACHE[cache_key] = (time.monotonic() + _GEOCODE_TTL, result)
+                while len(_GEOCODE_CACHE) > _GEOCODE_CACHE_LIMIT:
+                    _GEOCODE_CACHE.popitem(last=False)
+                return deepcopy(result)
+            except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+                had_failure = True
+                continue
+        if had_failure:
+            return {"matches": [], "error": "Location lookup is temporarily unavailable. "
+                    "Please try again shortly or provide latitude and longitude.", "retryable": True}
         return {"matches": [], "note": "No match found. Try adding the city name."}
-    return {
-        "matches": [
-            {
-                "name": item.get("display_name", "")[:120],
-                "lat": float(item["lat"]),
-                "lon": float(item["lon"]),
-            }
-            for item in results
-        ]
-    }
 
 
 def _compact_nowcast(result: dict) -> dict:
@@ -399,9 +477,6 @@ def chat_stream(messages):
     messages: [{"role": "user"|"model", "text": "..."}, ...] (newest last)
     Events: {"type":"text","delta"} | {"type":"tool","name"} | {"type":"done"} | {"type":"error","message"}
     """
-    from google import genai  # imported lazily so the app boots without the package/key
-    from google.genai import types, errors
-
     gemini_keys = get_api_keys()
     groq_key = _groq_key()
 
@@ -410,6 +485,18 @@ def chat_stream(messages):
         return
 
     gemini_exhausted = not gemini_keys  # if no Gemini keys, go straight to Groq
+    quota_only = True
+    failure_message = "AI service is temporarily unavailable. Please try again shortly."
+
+    if gemini_keys:
+        try:
+            from google import genai
+            from google.genai import types, errors
+        except ImportError:
+            gemini_keys = []
+            gemini_exhausted = True
+            quota_only = False
+            failure_message = "AI provider SDK is unavailable on the server."
 
     if gemini_keys:
         # Rotate the starting key each request to spread load across keys/projects.
@@ -417,10 +504,11 @@ def chat_stream(messages):
         order = gemini_keys[start:] + gemini_keys[:start]
 
         for i, key in enumerate(order):
-            client = genai.Client(api_key=key)
-            contents = _build_contents(types, messages)  # fresh per attempt
             emitted_text = False
+            client = None
             try:
+                client = genai.Client(api_key=key)
+                contents = _build_contents(types, messages)  # fresh per attempt
                 for evt in _run_once(client, types, contents):
                     if '"type": "text"' in evt:
                         emitted_text = True
@@ -428,29 +516,48 @@ def chat_stream(messages):
                 return  # completed on this key
             except errors.APIError as e:
                 is_429 = getattr(e, "code", None) == 429
+                if not is_429:
+                    quota_only = False
+                    failure_message = f"AI provider request failed (HTTP {getattr(e, 'code', 'unknown')}). Please try again shortly."
                 if emitted_text:
                     # already streaming to the user — can't cleanly fail over
-                    yield _sse({"type": "error", "message": f"AI error: {getattr(e, 'message', str(e))[:200]}"})
+                    yield _sse({"type": "error", "message": "AI response was interrupted. Please try again."})
                     return
                 if is_429 and i < len(order) - 1:
                     continue  # quota on this key — try the next Gemini key
                 if is_429:
                     gemini_exhausted = True  # all Gemini keys quota'd — try Groq
                     break
-                # Non-429 Gemini failure with nothing streamed yet — try Groq too
+                # A disabled/invalid key should not prevent trying other keys.
+                if i < len(order) - 1:
+                    continue
                 gemini_exhausted = True
                 break
             except Exception:
+                quota_only = False
+                if emitted_text:
+                    yield _sse({"type": "error", "message": "AI response was interrupted. Please try again."})
+                    return
+                if i < len(order) - 1:
+                    continue
                 gemini_exhausted = True
                 break
+            finally:
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
 
     # Groq fallback
     if gemini_exhausted and groq_key:
         try:
             yield from _run_groq(groq_key, messages)
             return
-        except Exception as e:
-            yield _sse({"type": "error", "message": f"Fallback AI error: {str(e)[:200]}"})
+        except Exception:
+            yield _sse({"type": "error", "message": "Fallback AI service is unavailable. Please try again shortly."})
             return
 
-    yield _sse({"type": "error", "message": "AI assistant is resting (quota hit). Try again in a minute. 🌧️"})
+    message = ("AI request limit reached. Please try again in a minute."
+               if quota_only else failure_message)
+    yield _sse({"type": "error", "message": message})
