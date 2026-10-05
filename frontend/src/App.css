@@ -1690,8 +1690,18 @@
 .alerts-card__row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
+
+.alerts-card__actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alerts-card__actions .alerts-card__btn { margin-left: 0; }
 
 .alerts-card__text {
   display: flex;
