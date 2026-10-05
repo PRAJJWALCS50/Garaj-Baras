@@ -26,6 +26,46 @@ SOHRA_DBZ = [10 + (i + .5) * 50 / 31 for i in range(31)]
 MBL_DBZ = [4.5, 9.5, 15, 19.5, 22, 25.5, 31, 35.5,
            38, 41.5, 47, 51.5, 54, 57.5, 63, 69]
 MANGALURU_DBZ = [20 + i * 40 / 15 for i in range(16)]
+THIRUVANANTHAPURAM_DBZ = [2 + i * 4 for i in range(15)]
+
+
+@lru_cache(maxsize=1)
+def _thiruvananthapuram_templates():
+    data = json.loads((ROOT / 'thiruvananthapuram_digits.json').read_text(encoding='utf-8'))
+    return {label: [np.unpackbits(np.frombuffer(bytes.fromhex(value), dtype=np.uint8)).reshape(
+        (24, 16)).astype(bool) for value in variants] for label, variants in data.items()}
+
+
+def thiruvananthapuram_timestamp(image):
+    """Read the explicit dated UTC header, without a runtime OCR binary."""
+    templates = _thiruvananthapuram_templates()
+
+    def read(box, count, separators):
+        glyphs = _glyphs(image, box)
+        if len(glyphs) != count:
+            return ''
+        result = []
+        for index, glyph in enumerate(glyphs):
+            expected = separators.get(index)
+            if expected:
+                if max(float((glyph == variant).mean()) for variant in templates[expected]) < .95:
+                    return ''
+                result.append(expected)
+                continue
+            scores = sorted((max(float((glyph == variant).mean()) for variant in variants), label)
+                            for label, variants in templates.items() if label.isdigit())
+            if scores[-1][0] < .95 or scores[-1][0] - scores[-2][0] < .03:
+                return ''
+            result.append(scores[-1][1])
+        return ''.join(result)
+
+    date = read((7, 17, 134, 36), 10, {4: '/', 7: '/'})
+    clock = read((238, 17, 328, 36), 8, {2: ':', 5: ':'})
+    try:
+        return datetime.strptime(date + ' ' + clock, '%Y/%m/%d %H:%M:%S').replace(
+            tzinfo=timezone.utc).astimezone(IST)
+    except ValueError:
+        return None
 
 
 @lru_cache(maxsize=1)
@@ -182,6 +222,21 @@ def decode_reflectivity(image, station):
         source_center, source_radius, range_km = (width - 1) / 2, (width - 1) / 2, 170.
         values = MBL_DBZ
         timestamp = ocr_timestamp_from_image(image, (560, 107, 718, 268))
+    elif station == 'thiruvananthapuram':
+        if image.size != (1082, 720):
+            raise ValueError('Thiruvananthapuram layout changed')
+        colors = [arr[687 - i * 18, 765] for i in range(15)]
+        # Fifteen four-dBZ intervals; white is 28..32 dBZ, not 60.
+        # No-data is grey and is deliberately omitted from the palette.
+        anchors = {0: (57, 0, 159), 5: (82, 208, 254),
+                   7: (254, 254, 254), 14: (199, 0, 78)}
+        if any(np.linalg.norm(colors[i].astype(float) - c) > 8 for i, c in anchors.items()):
+            raise ValueError('Thiruvananthapuram feed is not supported MAX(Z) reflectivity')
+        # North-up map, explicit site/range in header. Crosshair (300,438),
+        # measured outer ring radius 257.7 px (240 km), excluding vertical panels.
+        box, source_center, source_radius, range_km = (42, 180, 559, 698), 258., 257.7, 240.
+        values = THIRUVANANTHAPURAM_DBZ
+        timestamp = thiruvananthapuram_timestamp(image)
     elif station == 'mangaluru':
         if image.size != (1310, 1080):
             raise ValueError('Mangaluru layout changed')

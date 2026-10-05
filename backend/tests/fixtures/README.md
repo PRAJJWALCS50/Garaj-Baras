@@ -33,3 +33,14 @@ are sent to rain predictions.
   legend `(1160,345,1230,835)`, and rain sample `(380,580,560,760)`
   on a black 1310×1080 canvas. The 250 km ring is 440 source pixels;
   white is 41.3 dBZ. Runtime code reads the explicit printed date.
+
+- `thiruvananthapuram.png` and `thiruvananthapuram_previous.png`: selected
+  original pixels from the official
+  https://mausam.imd.gov.in/Radar/animation/Converted/TVM_MAXZ.gif captured
+  2026-10-05, frame 18 (2026-10-05 01:07:31 UTC) and frame 7
+  (2026-10-04 23:35:13 UTC). Black 1082×720 canvas retaining
+  header `(0,0,1082,40)`, legend `(742,390,935,700)` and rain/map sample
+  `(260,220,400,460)`. Header gives 8.5374 N, 76.8657 E and 240 km;
+  15 four-dBZ bins with white 28–32 dBZ and grey no-data.
+  Crosshair `(300,438)`, outer western arc radius 257.7 px (0.33 px RMS).
+  The explicit dates straddle UTC midnight; never substitute today's date.
