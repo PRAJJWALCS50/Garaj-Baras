@@ -277,16 +277,17 @@ def process_journeys(detect_radar, get_bundle):
                     body = (f"Radar shows {label.lower()} roughly {eta} min ahead "
                             f"on your route (estimate based on your speed).")
 
-                alive = _send_push(sub_json, title, body)
+                delivery = _send_push(sub_json, title, body)
                 with _db_lock, _conn() as c:
-                    if not alive:
+                    if delivery["dead"]:
                         c.execute("UPDATE journeys SET active=0 WHERE id=?", (jid,))
-                    else:
+                    elif delivery["ok"]:
                         c.execute("UPDATE journeys SET last_notified_at=? WHERE id=?",
                                   (_now().isoformat(), jid))
                         notified += 1
                 try:
-                    print(f"journeys: notified journey {jid}: {title}")
+                    if delivery["ok"]:
+                        print(f"journeys: notified journey {jid}: {title}")
                 except Exception:
                     pass
             except Exception as e:

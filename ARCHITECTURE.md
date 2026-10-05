@@ -425,7 +425,18 @@ as the Nowcast tab):
 - Separate 45-min cooldowns for heads-up vs arrival; dead subscriptions
   (HTTP 404/410) are pruned. VAPID keys from env
   (`VAPID_PRIVATE_KEY_PEM`/`VAPID_PUBLIC_KEY`, paste-mistake-tolerant) or
-  `vapid_keys.json` in dev. Push TTL 3600 (WNS rejects 0).
+  `vapid_keys.json` in dev. Push TTL 3600 (WNS rejects 0), with a 15-second request timeout.
+- Only accepted pushes advance state and cooldowns; rejected/transient pushes
+  remain retryable on subsequent sweeps, including journey notifications.
+  Moving a subscription to another location resets its state and cooldowns.
+- Nowcast alerts restore their watched location from `/alerts/status` and
+  validate the browser subscription against the current VAPID public key.
+  Permission is requested directly on the Enable click before asynchronous
+  setup; service-worker activation is bounded to 20 seconds. Unsupported
+  browsers show instructions instead of hiding the card. Users can move the
+  watch with **Use this location** and check acceptance with **Test notification**;
+  push-service acceptance does not guarantee that the phone displays it.
+  Instant checks and fresh-cache sweeps enforce native radar freshness too.
 
 **Two triggers keep alerts timely (beyond the browse-driven refresh):**
 - **Instant check on subscribe:** `/alerts/subscribe` spawns a background
@@ -572,7 +583,7 @@ reusing any GCP numbers.
 | `/journey/update` | POST | Re-anchor the guardian's dead-reckoning with real GPS progress: `{journey_id, progress_km, speed_kmh?}` |
 | `/journey/end` | POST | Deactivate a journey (explicit end or arrival) |
 | `/alerts/vapid_public_key` | GET | Push public key |
-| `/alerts/subscribe` / `/alerts/unsubscribe` / `/alerts/test` | POST | Push subscription management |
+| `/alerts/subscribe` / `/alerts/unsubscribe` / `/alerts/test` / `/alerts/status` | POST | Push subscription management |
 | `/stats/accuracy?days=` | GET | Verified POD/FAR/CSI |
 | `/imd_warnings/route` | POST | `{waypoints:[{lat,lon,eta_mins}]}` → unique districts on the route with today's + tomorrow's IMD district warnings (warned districts only) |
 | `/tasks/fetch_imd_warnings?token=` | GET | Queue an IMD district-warning fetch into the DB (SWEEP_TOKEN-gated) |

@@ -7,6 +7,7 @@ import { ImdRouteWarnings } from './ImdRouteWarnings'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
 import './App.css'
 import { useAuth, AccountButton, SignInGate } from './auth'
+import { hasPushSupport, publicKeyBytes, subscriptionMatchesKey, activePushRegistration, pushSubscriptionForKey } from './pushAlerts'
 import SavedMenu from './SavedMenu'
 import Onboarding, { ONBOARDING_KEY } from './Onboarding'
 import { useT, tr, LangToggle } from './i18n'
@@ -1379,128 +1380,135 @@ function RadarScenePlayer({ lat, lon, requestId, highlightEta = null }) {
   )
 }
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
-  const raw = window.atob(base64)
-  const arr = new Uint8Array(raw.length)
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i)
-  return arr
-}
-
 function RainAlertsCard({ lat, lon, label }) {
   const t = useT()
   const { authHeaders } = useAuth()
-  const [status, setStatus] = useState('idle') // idle|working|enabled|unsupported|denied|error
+  const [status, setStatus] = useState('checking')
+  const [watch, setWatch] = useState(null)
   const [note, setNote] = useState(null)
+  const [busy, setBusy] = useState(null)
+  const enabled = status === 'enabled'
+  const locationChanged = enabled && watch &&
+    (Math.abs(watch.lat - lat) > 0.00001 || Math.abs(watch.lon - lon) > 0.00001)
 
   useEffect(() => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      setStatus('unsupported')
-      return
-    }
-    navigator.serviceWorker.getRegistration().then(async (reg) => {
+    let cancelled = false
+    if (!hasPushSupport()) { setStatus('unsupported'); return }
+    if (Notification.permission === 'denied') { setStatus('denied'); return }
+    async function restore() {
       try {
-        const sub = reg && (await reg.pushManager.getSubscription())
-        if (sub && localStorage.getItem('gb_alerts_endpoint') === sub.endpoint) {
-          setStatus('enabled')
-          setNote(localStorage.getItem('gb_alerts_label') || null)
-        }
-      } catch {}
-    }).catch(() => {})
-  }, [])
-
-  async function enable() {
-    setStatus('working'); setNote(null)
-    try {
-      await navigator.serviceWorker.register('/sw.js')
-      // Wait until the worker is ACTIVE — subscribing on a fresh, still-
-      // installing registration throws InvalidStateError.
-      const reg = await navigator.serviceWorker.ready
-      const perm = await Notification.requestPermission()
-      if (perm !== 'granted') { setStatus('denied'); return }
-      const { data } = await axios.get(`${API_BASE}/alerts/vapid_public_key`)
-      const key = urlBase64ToUint8Array(data.public_key)
-      let sub
-      try {
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: key,
-        })
-      } catch (e) {
-        // An old subscription with a different server key blocks resubscribe
-        const old = await reg.pushManager.getSubscription()
-        if (old) {
-          await old.unsubscribe()
-          sub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: key,
-          })
+        const reg = await navigator.serviceWorker.getRegistration()
+        const sub = reg && await reg.pushManager.getSubscription()
+        if (!sub) { if (!cancelled) setStatus('idle'); return }
+        const { data } = await axios.post(`${API_BASE}/alerts/status`, { endpoint: sub.endpoint },
+          { headers: authHeaders(), timeout: 30000 })
+        if (cancelled) return
+        if (data.enabled && subscriptionMatchesKey(sub, publicKeyBytes(data.public_key))) {
+          setWatch({ ...data, endpoint: sub.endpoint }); setStatus('enabled')
         } else {
-          throw e
+          setStatus('idle')
+          setNote(t('Enable alerts again to reconnect this phone.', 'इस फ़ोन को फिर जोड़ने के लिए अलर्ट चालू करें।'))
+        }
+      } catch {
+        if (!cancelled) {
+          setStatus('error')
+          setNote(t('Could not check saved alerts. Tap Enable to reconnect.', 'सहेजे गए अलर्ट जाँचे नहीं जा सके। फिर जोड़ने के लिए चालू करें दबाएँ।'))
         }
       }
-      await axios.post(`${API_BASE}/alerts/subscribe`, {
+    }
+    restore()
+    return () => { cancelled = true }
+  }, [authHeaders, t])
+
+  async function enable() {
+    setBusy('enabling'); setNote(null)
+    try {
+      // Request permission directly in the click handler, before any network
+      // or service-worker await can consume the browser's user gesture.
+      const permission = Notification.permission === 'granted'
+        ? 'granted' : await Notification.requestPermission()
+      if (permission !== 'granted') { setStatus('denied'); return }
+      const reg = await activePushRegistration()
+      const { data } = await axios.get(`${API_BASE}/alerts/vapid_public_key`, { timeout: 30000 })
+      const sub = await pushSubscriptionForKey(reg, publicKeyBytes(data.public_key))
+      const response = await axios.post(`${API_BASE}/alerts/subscribe`, {
         subscription: sub.toJSON(), lat, lon, label: label || null,
-      }, { headers: authHeaders() })
+      }, { headers: authHeaders(), timeout: 30000 })
+      if (!response.data.ok) throw new Error(response.data.detail || 'Could not save rain alerts.')
       localStorage.setItem('gb_alerts_endpoint', sub.endpoint)
       localStorage.setItem('gb_alerts_label', label || '')
-      setStatus('enabled')
-      setNote(label || null)
-    } catch (e) {
-      console.error('rain alerts enable failed:', e)
+      setWatch({ endpoint: sub.endpoint, lat, lon, label }); setStatus('enabled')
+      setNote(t('Alerts saved. Tap Test notification to check delivery on your phone.', 'अलर्ट सहेजे गए। फ़ोन पर जाँचने के लिए टेस्ट सूचना दबाएँ।'))
+    } catch (error) {
       setStatus('error')
-      setNote(`${e?.name || tr('Error', 'त्रुटि')}: ${(e?.message || String(e)).slice(0, 140)}`)
-    }
+      setNote(error?.response?.data?.detail || error?.message || t('Could not enable alerts. Please retry.', 'अलर्ट चालू नहीं हो सके। फिर कोशिश करें।'))
+    } finally { setBusy(null) }
+  }
+
+  async function testNotification() {
+    setBusy('testing'); setNote(null)
+    try {
+      const { data } = await axios.post(`${API_BASE}/alerts/test`, { endpoint: watch.endpoint },
+        { headers: authHeaders(), timeout: 30000 })
+      if (!data.ok) {
+        if (data.dead || data.status === 403) { setWatch(null); setStatus('idle') }
+        throw new Error(data.error || t('Notification was not sent. Please retry.', 'सूचना नहीं भेजी गई। फिर कोशिश करें।'))
+      }
+      setNote(t('Test sent. Check your phone’s notifications. If it is missing, check Chrome/Edge notification settings.', 'टेस्ट भेजा गया। फ़ोन की सूचनाएँ देखें। नहीं मिला तो Chrome/Edge की सूचना सेटिंग जाँचें।'))
+    } catch (error) {
+      if (error?.response?.status === 404) { setWatch(null); setStatus('idle') }
+      setNote(error?.response?.data?.detail || error?.message || t('Could not send the test.', 'टेस्ट नहीं भेजा जा सका।'))
+    } finally { setBusy(null) }
   }
 
   async function disable() {
-    setStatus('working')
+    setBusy('disabling'); setNote(null)
     try {
       const reg = await navigator.serviceWorker.getRegistration()
-      const sub = reg && (await reg.pushManager.getSubscription())
-      if (sub) {
-        try { await axios.post(`${API_BASE}/alerts/unsubscribe`, { endpoint: sub.endpoint }) } catch {}
-        await sub.unsubscribe()
-      }
-      localStorage.removeItem('gb_alerts_endpoint')
-      localStorage.removeItem('gb_alerts_label')
-      setStatus('idle')
-    } catch {
-      setStatus('idle')
-    }
+      const sub = reg && await reg.pushManager.getSubscription()
+      const endpoint = sub?.endpoint || watch?.endpoint
+      if (endpoint) await axios.post(`${API_BASE}/alerts/unsubscribe`, { endpoint },
+        { headers: authHeaders(), timeout: 30000 })
+      if (sub) await sub.unsubscribe()
+      localStorage.removeItem('gb_alerts_endpoint'); localStorage.removeItem('gb_alerts_label')
+      setWatch(null); setStatus('idle')
+    } catch (error) {
+      setNote(error?.response?.data?.detail || t('Could not disable alerts. Please retry.', 'अलर्ट बंद नहीं हो सके। फिर कोशिश करें।'))
+    } finally { setBusy(null) }
   }
 
-  if (status === 'unsupported') return null
+  const message = enabled
+    ? t(`Watching ${watch?.label || 'your saved location'} — alerts require over 70% rain probability in the next 30 min, or over 80% later.`, `${watch?.label || 'आपका सहेजा गया स्थान'} पर नज़र — अगले 30 मिनट में बारिश की संभावना 70% से ऊपर, या उसके बाद 80% से ऊपर होने पर अलर्ट मिलेगा।`)
+    : status === 'unsupported'
+      ? t('Notifications are unavailable in this browser. Open Garaj-Baras in Chrome or Edge. On iPhone, add it to the Home Screen first.', 'इस ब्राउज़र में सूचनाएँ उपलब्ध नहीं हैं। Garaj-Baras को Chrome या Edge में खोलें। iPhone पर पहले होम स्क्रीन में जोड़ें।')
+      : status === 'denied'
+        ? t('Allow notifications in your browser’s site settings, then reload this page.', 'ब्राउज़र की साइट सेटिंग में सूचनाएँ अनुमति दें, फिर यह पेज दोबारा खोलें।')
+        : status === 'checking'
+          ? t('Checking saved rain alerts…', 'सहेजे गए बारिश अलर्ट जाँचे जा रहे हैं…')
+          : t('Enable notifications for this location, then send a test to your phone.', 'इस स्थान की सूचनाएँ चालू करें, फिर अपने फ़ोन पर टेस्ट भेजें।')
 
   return (
     <div className="alerts-card">
       <div className="alerts-card__row">
         <div className="alerts-card__text">
           <span className="alerts-card__title">{t('🔔 Rain alerts', '🔔 बारिश अलर्ट')}</span>
-          <span className="alerts-card__sub">
-            {status === 'enabled'
-              ? t(`Watching ${note || 'your saved location'} — you'll be notified when rain is here or up to ~105 min away.`, `${note || 'आपका सहेजा गया स्थान'} पर नज़र रखी जा रही है — जब यहाँ बारिश हो या ~105 मिनट दूर हो, आपको सूचित किया जाएगा।`)
-              : status === 'denied'
-                ? t('Notifications are blocked in your browser settings.', 'आपके ब्राउज़र सेटिंग्स में सूचनाएँ अवरुद्ध हैं।')
-                : status === 'error'
-                  ? (note ? t(`Could not enable alerts — ${note}`, `अलर्ट चालू नहीं हो सके — ${note}`) : t('Could not enable alerts — try again in a moment.', 'अलर्ट चालू नहीं हो सके — कुछ देर में फिर कोशिश करें।'))
-                  : t('Get notified when rain reaches this location, or is up to ~105 min away (radar-based estimate).', 'जब बारिश इस स्थान पर पहुँचे या ~105 मिनट दूर हो, सूचना पाएँ (रडार-आधारित अनुमान)।')}
-          </span>
+          <span className="alerts-card__sub">{message}</span>
+          {locationChanged && <span className="alerts-card__sub">{t('You selected a different location. Tap “Use this location” to move your alerts.', 'आपने दूसरा स्थान चुना है। अलर्ट बदलने के लिए “यह स्थान चुनें” दबाएँ।')}</span>}
+          {note && <span className="alerts-card__sub" role="status" aria-live="polite">{note}</span>}
         </div>
-        {status === 'enabled' ? (
-          <button type="button" className="alerts-card__btn alerts-card__btn--off" onClick={disable}>
-            {t('Disable', 'बंद करें')}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="alerts-card__btn"
-            disabled={status === 'working' || lat == null || lon == null}
-            onClick={enable}
-          >
-            {status === 'working' ? t('Enabling…', 'चालू हो रहा है…') : t('Enable', 'चालू करें')}
-          </button>
+        {status !== 'unsupported' && (
+          <div className="alerts-card__actions">
+            {enabled && <button type="button" className="alerts-card__btn" disabled={!!busy} onClick={testNotification}>
+              {busy === 'testing' ? t('Sending…', 'भेजा जा रहा है…') : t('Test notification', 'टेस्ट सूचना')}
+            </button>}
+            {(!enabled || locationChanged) && <button type="button" className="alerts-card__btn"
+              disabled={!!busy || status === 'checking' || status === 'denied' || lat == null || lon == null} onClick={enable}>
+              {busy === 'enabling' ? t('Enabling…', 'चालू हो रहा है…') : locationChanged ? t('Use this location', 'यह स्थान चुनें') : t('Enable', 'चालू करें')}
+            </button>}
+            {enabled && <button type="button" className="alerts-card__btn alerts-card__btn--off" disabled={!!busy} onClick={disable}>
+              {busy === 'disabling' ? t('Disabling…', 'बंद हो रहा है…') : t('Disable', 'बंद करें')}
+            </button>}
+          </div>
         )}
       </div>
     </div>

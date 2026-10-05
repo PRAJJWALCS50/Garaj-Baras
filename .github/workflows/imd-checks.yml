@@ -36,6 +36,10 @@ jobs:
           python -m unittest discover -s backend/tests -p 'test_thiruvananthapuram.py'
       - name: Test AI location fallback and provider failures
         run: python -m unittest discover -s backend/tests -p 'test_chatbot.py'
+      - name: Test notification retries and browser subscription recovery
+        run: |
+          python -m unittest discover -s backend/tests -p 'test_alerts.py'
+          node --test frontend/tests/pushAlerts.test.mjs
       - name: Build frontend including warning card
         working-directory: frontend
         run: |

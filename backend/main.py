@@ -1819,7 +1819,7 @@ def _instant_alert_check(endpoint: str, lat: float, lon: float) -> None:
         if not reg:
             return
         state = _ensure_radar_fresh_blocking(name)
-        if not (state and state.get("latest_frame")):
+        if not (state and state.get("latest_frame") and _forecast_ready(name, state)):
             return
         alerts.process_alerts(name, state, reg["georef"].is_within_radar,
                               reg["georef"].latlon_to_pixel, only_endpoint=endpoint)
@@ -1874,7 +1874,7 @@ def _sweep_alerts() -> dict:
         # this radar's city a few minutes ago), the refresh above no-ops and
         # alerts would otherwise be silently skipped for this sweep — so call
         # it explicitly in that case.
-        if was_fresh and state and reg:
+        if was_fresh and state and reg and _forecast_ready(name, state):
             try:
                 alerts.process_alerts(name, state, reg["georef"].is_within_radar,
                                       reg["georef"].latlon_to_pixel)
@@ -2949,15 +2949,22 @@ def alerts_debug(send_test: int = 0, token: str = ""):
     }
 
 
+@app.post("/alerts/status")
+def alerts_status(req: AlertEndpointRequest):
+    return alerts.subscription_status(req.endpoint)
+
+
 @app.post("/alerts/test")
 def alerts_test(req: AlertEndpointRequest):
     """Fire a test notification to one subscription (for setup verification)."""
     row = alerts.get_subscription(req.endpoint)
     if not row:
         raise HTTPException(status_code=404, detail="Subscription not found.")
-    alive = alerts._send_push(row[0], "🔔 Garaj Baras test",
-                              f"Rain alerts are working for {row[1] or 'your location'}.")
-    return {"ok": bool(alive)}
+    delivery = alerts.send_test_verbose(row[0], "🔔 Garaj Baras test",
+                                        f"If you can see this, notifications work for {row[1] or 'your location'}.")
+    if delivery["dead"]:
+        alerts.unsubscribe(req.endpoint)
+    return delivery
 
 
 # ENDPOINTS: Accounts + saved locations (Supabase Auth; auth.py verifies the
