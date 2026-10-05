@@ -114,7 +114,7 @@ Each GIF ≈ 18 frames ≈ last 3 hours. The Delhi frame is 880×720 but only a
 text. Rain intensity (reflectivity, **dBZ**) is encoded as 10 legend colors
 (dark blue ≈ 20 dBZ light drizzle → yellow 44 heavy → red 55 → white 60 extreme).
 
-**Ten radars, each with its own `radar_*.py` + `georef_*.py` pair:**
+**Eleven radars, each with its own `radar_*.py` + `georef_*.py` pair:**
 
 | Radar | Center | Notes |
 |---|---|---|
@@ -128,6 +128,8 @@ text. Rain intensity (reflectivity, **dBZ**) is encoded as 10 legend colors
 | Nagpur | 21.15 N, 79.05 E | Vidarbha / central India (Maharashtra, MP, Chhattisgarh, Telangana). Same bottom-left panel layout/crop box as Jaipur/Paradip/Patiala → 520×520, Delhi OCR box. **250 km radar** using an **AEQD model** (like Lucknow/Patiala): station crosshair/disc-center at crop (260, 259), scale 1.028 px/km (250 km disc edge ≈ 257 px, identical rendering to Jaipur/Paradip). Nagpur's graticule is **unlabeled**, so the center is anchored by a least-squares fit of the AEQD projection to surrounding real-city labels (Betul/Wardha/Seoni/Chandrapur/Akola/Yavatmal/Bhandara/Gadchiroli/Jabalpur) → (21.15, 79.05) at the Sonegaon site, cross-checked against the NGP crosshair. Current image: `caz_ngp.gif`; animation `NGP_MAXZ.gif` (URL code `NGP`). |
 | Sohra | 25.2680 N, 91.7332 E | Meghalaya / Assam / northeast. `CPJ_MAXZ.gif` + `caz_cpj.gif`; 1078×770 native frame, map `(43,193,598,748)`, crosshair (320,470), outer ring radius 277 px = **240 km**. Native 31-bin 10–60 dBZ palette; explicit YYYY/MM/DD + UTC clock read using `sohra_digits.json`. Normalized 549×549 rain-only frames at 0.877 km/px; exact AEQD forward/inverse and circular bounds. |
 | Mahabaleshwar | 17.9217 N, 73.6556 E | Western Maharashtra / Konkan. **170 km**. Actual source `MAX_Z_mbl.gif`, 720×720 IRIS image with a separate 16-bin 2–72 dBZ palette. Map width changes with vertical panels; detect its solid border per frame (453 px on inspected Z image), map ends at y=640, center/radius=(width−1)/2. Normalize 389×389 at 0.877 km/px with AEQD + circular bounds. `MBL_MAXZ.gif` was serving **MAX_V velocity**, and `MBL_SRI.gif` accumulated rainfall, on 2026-10-02: neither is valid reflectivity. Reject them by legend signatures; use Z animation only if it becomes valid, otherwise retain six genuine current MAX_Z observations on disk. |
+
+| Mangaluru (Mangalore) | 12.9037 N, 74.8620 E | Karnataka coast / Udupi / Kannur. `MLR_MAXZ.gif` + `caz_mlr.gif`, MAXDISPLAY(Z), **250 km**. Native 1310×1080 source; map `(0,200,880,1080)`, center `(440,640)`, 440 px outer ring. Site rendering position fitted to IXE/CNN/CLT/MYS airport markers (<=1.4 source-pixel residual). Sixteen 20–60 dBZ legend levels; white is 41.3 dBZ. Normalize to 573×573 at 0.877 km/px with AEQD and circular bounds. |
 
 **Current-image augmentation (all radars):** IMD's animation GIF rebuilds
 lazily and can lag 50–60+ min behind its single "current radar" image
@@ -146,7 +148,7 @@ fall back to Delhi. Out-of-coverage points get an explicit
 
 ### Nonstandard native radar ingestion
 
-`native_radar.py` is shared by `radar_sohra.py` and `radar_mahabaleshwar.py`.
+`native_radar.py` is shared by `radar_sohra.py`, `radar_mahabaleshwar.py` and `radar_mangaluru.py`.
 It validates source size/product, reads measured timestamps, maps exact native
 legend colours to the existing engine's ten reflectivity levels while preserving
 rain-intensity category boundaries, and removes map furniture/no-data. Echoes
@@ -156,7 +158,7 @@ numeric reflectivity recovery. Raw official images remain available via
 `/radar/gif`; no common-palette interpretation is applied to velocity or rainfall
 accumulation. Nearest-neighbour resampling uses the measured source ring radius
 and station-centered AEQD geometry at the engine's physical scale (0.877 km/px).
-The two native products therefore share every existing rain/motion/decay/scene/
+The three native products therefore share every existing rain/motion/decay/scene/
 route/alert consumer without accidentally interpreting native white as 60 dBZ.
 
 Native extraction skips byte-identical padded frames before decoding. A sorted
@@ -185,6 +187,19 @@ layout, timestamp/date reads, physical scale, inverse geometry, circular edges,
 city selection, and history deduplication/warmup. CI runs these checks alongside
 the complete-package guard, warning tests, and frontend build. The upload guard
 now requires the seven native radar runtime files as well.
+
+Mangaluru reads its explicit DD-Mon-YYYY UTC header using packed digit/month
+templates in `mangaluru_glyphs.json` (no runtime OCR/font dependency). Duplicate
+animation padding is skipped. Isolated thin white district boundaries are
+suppressed; broad white echoes or white alongside coloured echoes are retained.
+This heuristic can suppress small isolated white echoes. Scans older than 90
+minutes produce retryable 503 responses for live predictions, disable alerts,
+and are omitted from the nationwide mosaic; they never become clear-weather
+claims. Two genuine observations are required for motion forecasts. The AI
+route tool now uses the multi-radar waypoint endpoint, including Mangaluru.
+`test_mangaluru.py` exercises real header/palette samples, invalid products,
+circular geometry, city routing, history deduplication and stale-feed handling.
+The two-radar LRU and six-frame history remain unchanged.
 
 ## 5. Processing pipeline (runs once per radar refresh, cached)
 
@@ -492,7 +507,7 @@ Ground Control Points (cities with known lat/lon and pixel positions; ≤4 px
 residual for Delhi). Exposes `latlon_to_pixel`, `pixel_to_latlon`,
 `is_within_radar`, `IMAGE_WIDTH/HEIGHT`, `CENTER_LAT/LON`. Scale ≈ 0.877 km/px.
 
-**Exception — Lucknow, Patiala, Nagpur, Sohra and Mahabaleshwar use an exact azimuthal-equidistant
+**Exception — Lucknow, Patiala, Nagpur, Sohra, Mahabaleshwar and Mangaluru use an exact azimuthal-equidistant
 (AEQD) model, not a quadratic GCP fit.** (Patiala's ring-derived center is also
 cross-checked against the graticule; Nagpur's graticule is unlabeled so its
 center is a least-squares fit to surrounding real-city labels; see the radar
@@ -527,7 +542,7 @@ reusing any GCP numbers.
 | `/health` | GET | Liveness (also the keep-alive target) |
 | `/debug/cache` | GET | Per-radar cache freshness/ready diagnostics |
 | `/movement` | GET | Global rain movement over Delhi NCR |
-| `/radar/gif?radar=` | GET | Latest downloaded radar GIF (delhi/lucknow/patna/bhopal/jaipur/paradip/patiala/nagpur/sohra/mahabaleshwar) |
+| `/radar/gif?radar=` | GET | Latest downloaded radar GIF (delhi/lucknow/patna/bhopal/jaipur/paradip/patiala/nagpur/sohra/mahabaleshwar/mangaluru) |
 | `/frames/latest?n=&force=` | GET | Latest frame URLs + timestamps + lag info |
 | `/india-radar/metadata` | GET | Station locations, operational ranges, and India mosaic bounds for the separate national map UI. |
 | `/india-radar/mosaic.png` | GET | Transparent India-wide reflectivity composite. It sequentially uses existing station states and caches only the rendered PNG for 5 minutes, preserving the two-radar heavy-state LRU. |
