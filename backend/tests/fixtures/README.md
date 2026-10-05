@@ -26,3 +26,10 @@ white represents 34.19–35.81 dBZ. It cannot use the old white=60 mapping. The
 adapter preserves the existing intensity categories, with the engine's 20 dBZ
 floor and ten-level quantization; no pixels from MAX_V or accumulated rainfall
 are sent to rain predictions.
+
+- `mangaluru.png`: selected original pixels from
+  https://mausam.imd.gov.in/Radar/caz_mlr.gif captured 2026-10-05,
+  23:30:01 UTC on **2026-10-04**. Retains header `(1080,0,1310,115)`,
+  legend `(1160,345,1230,835)`, and rain sample `(380,580,560,760)`
+  on a black 1310×1080 canvas. The 250 km ring is 440 source pixels;
+  white is 41.3 dBZ. Runtime code reads the explicit printed date.

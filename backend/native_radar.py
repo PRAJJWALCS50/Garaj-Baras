@@ -9,6 +9,7 @@ import os
 import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -24,6 +25,77 @@ IST = timezone(timedelta(hours=5, minutes=30))
 SOHRA_DBZ = [10 + (i + .5) * 50 / 31 for i in range(31)]
 MBL_DBZ = [4.5, 9.5, 15, 19.5, 22, 25.5, 31, 35.5,
            38, 41.5, 47, 51.5, 54, 57.5, 63, 69]
+MANGALURU_DBZ = [20 + i * 40 / 15 for i in range(16)]
+
+
+@lru_cache(maxsize=1)
+def _mangaluru_templates():
+    data = json.loads((ROOT / 'mangaluru_glyphs.json').read_text(encoding='utf-8'))
+    return {kind: {label: [np.unpackbits(np.frombuffer(bytes.fromhex(v), dtype=np.uint8)).reshape(
+        (24, 16 if kind == 'digits' else 48)).astype(bool) for v in variants]
+        for label, variants in group.items()} for kind, group in data.items()}
+
+
+def mangaluru_timestamp(image):
+    """Read the explicit UTC date/time; never substitute today's date."""
+    templates = _mangaluru_templates()
+
+    def match(glyph, group, minimum, margin):
+        scores = sorted((max(float((glyph == variant).mean()) for variant in variants), label)
+                        for label, variants in group.items())
+        if scores[-1][0] < minimum or scores[-1][0] - scores[-2][0] < margin:
+            return None
+        return scores[-1][1]
+
+    def digits(box, count, separators=None):
+        glyphs = _glyphs(image, box)
+        if len(glyphs) != count:
+            return None
+        result = []
+        for i, glyph in enumerate(glyphs):
+            if separators and i in separators:
+                # Reject damaged separators rather than shifting digit positions.
+                if not .25 < float(glyph.mean()) < .8:
+                    return None
+                result.append(':')
+            else:
+                char = match(glyph, templates['digits'], .85, .035)
+                if char is None:
+                    return None
+                result.append(char)
+        return ''.join(result)
+
+    clock = digits((1084, 94, 1141, 107), 8, {2, 5})
+    # Month words have different widths; locate date separators instead of
+    # assuming Oct's x-position for the year on future scans.
+    date_ink = np.array(image.crop((1185, 94, 1305, 107)).convert('L')) < 80
+    bounds = np.where(np.diff(np.r_[False, date_ink.any(axis=0), False]))[0]
+    runs = list(zip(bounds[::2], bounds[1::2]))
+    if len(runs) < 9:
+        return None
+    for index in (2, -5):
+        left, right = runs[index]
+        ys = np.where(date_ink[:, left:right].any(axis=1))[0]
+        if not len(ys) or ys[-1] - ys[0] > 2:
+            return None
+    day = digits((1185, 94, 1185+int(runs[1][1]), 107), 2)
+    year = digits((1185+int(runs[-4][0]), 94, 1185+int(runs[-1][1]), 107), 4)
+    ink = date_ink[:, runs[3][0]:runs[-5][0]]
+    ys, xs = np.where(ink)
+    if not len(xs):
+        return None
+    glyph = np.array(Image.fromarray(ink[ys.min():ys.max()+1, xs.min():xs.max()+1]).resize(
+        (48, 24), Image.Resampling.NEAREST)) > 0
+    month = match(glyph, templates['months'], .82, .08)
+    if not all((clock, day, year, month)):
+        return None
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    try:
+        h, m, s = map(int, clock.split(':'))
+        return datetime(int(year), months.index(month)+1, int(day), h, m, s,
+                        tzinfo=timezone.utc).astimezone(IST)
+    except ValueError:
+        return None
 
 
 def _canonical_color(dbz):
@@ -110,6 +182,25 @@ def decode_reflectivity(image, station):
         source_center, source_radius, range_km = (width - 1) / 2, (width - 1) / 2, 170.
         values = MBL_DBZ
         timestamp = ocr_timestamp_from_image(image, (560, 107, 718, 268))
+    elif station == 'mangaluru':
+        if image.size != (1310, 1080):
+            raise ValueError('Mangaluru layout changed')
+        # Sixteen native legend levels, 20..60 dBZ. White is 41.3 dBZ,
+        # not the legacy engine's extreme-rain white. Sample modal colours
+        # away from labels/borders; exact membership excludes basemap cyan.
+        colors = []
+        for i in range(16):
+            y = round(803 - i * 455 / 16)
+            pixels = arr[y-2:y+2, 1179:1215].reshape(-1, 3)
+            unique, counts = np.unique(pixels, axis=0, return_counts=True)
+            colors.append(unique[counts.argmax()])
+        anchors = {0: (0, 0, 147), 7: (134, 240, 255),
+                   8: (255, 255, 255), 15: (163, 0, 0)}
+        if any(np.linalg.norm(colors[i].astype(float) - c) > 12 for i, c in anchors.items()):
+            raise ValueError('Mangaluru feed is not supported MAXDISPLAY(Z) reflectivity')
+        box, source_center, source_radius, range_km = (0, 200, 880, 1080), 440., 440., 250.
+        values = MANGALURU_DBZ
+        timestamp = mangaluru_timestamp(image)
     else:
         raise ValueError('Unknown native station')
     if timestamp is None:
@@ -131,6 +222,15 @@ def decode_reflectivity(image, station):
     indices = np.searchsorted(keys, packed)
     normalized = mapped[indices]
     normalized[keys[indices] != packed] = 0
+    if station == 'mangaluru':
+        # IMD paints district boundaries in the same white as its 41.3-dBZ
+        # bin. Thin isolated white cartography is not a storm: retain white
+        # only inside a broad echo or alongside other measured rain colours.
+        white = (crop == 255).all(axis=2)
+        other_echo = normalized.any(axis=2) & ~white
+        white_support = cv2.boxFilter(white.astype(np.float32), -1, (7, 7), normalize=False)
+        echo_support = cv2.boxFilter(other_echo.astype(np.float32), -1, (7, 7), normalize=False)
+        normalized[white & (white_support < 25) & (echo_support < 4)] = 0
     radius = range_km / KM_PER_PX
     center = int(np.ceil(radius))
     yy, xx = np.mgrid[:2 * center + 1, :2 * center + 1]

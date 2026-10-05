@@ -58,6 +58,8 @@ import georef_sohra
 import radar_sohra
 import georef_mahabaleshwar
 import radar_mahabaleshwar
+import georef_mangaluru
+import radar_mangaluru
 import india_mosaic  # type: ignore
 
 
@@ -88,6 +90,9 @@ def _detect_radar(lat: float, lon: float) -> str:
         candidates.append(('sohra', haversine_km(lat, lon, georef_sohra.CENTER_LAT, georef_sohra.CENTER_LON)))
     if georef_mahabaleshwar.is_within_radar(lat, lon):
         candidates.append(('mahabaleshwar', haversine_km(lat, lon, georef_mahabaleshwar.CENTER_LAT, georef_mahabaleshwar.CENTER_LON)))
+
+    if georef_mangaluru.is_within_radar(lat, lon):
+        candidates.append(('mangaluru', haversine_km(lat, lon, georef_mangaluru.CENTER_LAT, georef_mangaluru.CENTER_LON)))
 
     if not candidates:
         return 'delhi'   # fallback
@@ -163,6 +168,8 @@ except Exception:
 try:
     os.makedirs(radar_nagpur.FRAMES_FOLDER, exist_ok=True)
     app.mount("/radar/frames_nagpur", StaticFiles(directory=radar_nagpur.FRAMES_FOLDER), name="radar_frames_nagpur")
+    os.makedirs(radar_mangaluru.FRAMES_FOLDER, exist_ok=True)
+    app.mount("/radar/frames_mangaluru", StaticFiles(directory=radar_mangaluru.FRAMES_FOLDER), name="radar_frames_mangaluru")
     os.makedirs(radar_sohra.FRAMES_FOLDER, exist_ok=True)
     app.mount("/radar/frames_sohra", StaticFiles(directory=radar_sohra.FRAMES_FOLDER), name="radar_frames_sohra")
     os.makedirs(radar_mahabaleshwar.FRAMES_FOLDER, exist_ok=True)
@@ -278,6 +285,7 @@ paradip_cache = {"clutter_mask": None, "last_loaded": None}
 patiala_cache = {"clutter_mask": None, "last_loaded": None}
 nagpur_cache  = {"clutter_mask": None, "last_loaded": None}
 sohra_cache  = {"clutter_mask": None, "last_loaded": None}
+mangaluru_cache  = {"clutter_mask": None, "last_loaded": None}
 mahabaleshwar_cache  = {"clutter_mask": None, "last_loaded": None}
 
 _radar_state_lock   = threading.Lock()
@@ -289,6 +297,7 @@ _paradip_state_lock = threading.Lock()
 _patiala_state_lock = threading.Lock()
 _nagpur_state_lock  = threading.Lock()
 _sohra_state_lock  = threading.Lock()
+_mangaluru_state_lock  = threading.Lock()
 _mahabaleshwar_state_lock  = threading.Lock()
 
 _delhi_bg_lock   = threading.Lock()
@@ -300,6 +309,7 @@ _paradip_bg_lock = threading.Lock()
 _patiala_bg_lock = threading.Lock()
 _nagpur_bg_lock  = threading.Lock()
 _sohra_bg_lock  = threading.Lock()
+_mangaluru_bg_lock  = threading.Lock()
 _mahabaleshwar_bg_lock  = threading.Lock()
 
 _delhi_ready   = threading.Event()
@@ -311,6 +321,7 @@ _paradip_ready = threading.Event()
 _patiala_ready = threading.Event()
 _nagpur_ready  = threading.Event()
 _sohra_ready  = threading.Event()
+_mangaluru_ready  = threading.Event()
 _mahabaleshwar_ready  = threading.Event()
 
 RADAR_CACHE_TTL_SEC = RADAR_TTL_SEC
@@ -352,6 +363,7 @@ def _touch_radar_and_evict(name: str) -> None:
         "patiala": (patiala_cache, _patiala_state_lock, _patiala_ready),
         "nagpur":  (nagpur_cache,  _nagpur_state_lock,  _nagpur_ready),
         "sohra":  (sohra_cache,  _sohra_state_lock,  _sohra_ready),
+        "mangaluru":  (mangaluru_cache,  _mangaluru_state_lock,  _mangaluru_ready),
         "mahabaleshwar":  (mahabaleshwar_cache,  _mahabaleshwar_state_lock,  _mahabaleshwar_ready),
     }
     cache, lock, _evt = entries.get(name, entries["delhi"])
@@ -1258,6 +1270,114 @@ def _load_nagpur_radar_state(ttl_sec: float = RADAR_CACHE_TTL_SEC, *, force: boo
     return nagpur_cache
 
 
+def _do_mangaluru_refresh(ttl_sec: float, force: bool = False) -> None:
+    if not _mangaluru_bg_lock.acquire(blocking=False):
+        return
+    try:
+        print("Mangaluru radar: refresh started")
+        mangaluru_gif = radar_mangaluru.GIF_SAVE_PATH
+        now = time.time()
+        try:
+            gif_fresh = os.path.exists(mangaluru_gif) and (now - os.path.getmtime(mangaluru_gif) < ttl_sec)
+        except Exception:
+            gif_fresh = False
+
+        frame_data, did_refresh = radar_mangaluru.refresh_frames_if_stale(ttl_sec=ttl_sec, force=force, clear_pngs=False)
+        if did_refresh:
+            all_frame_data = frame_data
+        else:
+            all_frame_data = radar_mangaluru.extract_frames(mangaluru_gif, radar_mangaluru.FRAMES_FOLDER) if gif_fresh else radar_mangaluru.get_all_frames()
+
+        # Same lazy-GIF fix as Delhi: IMD's current image often updates before
+        # the animation GIF — append it as the newest frame when strictly newer.
+        try:
+            all_frame_data = radar_mangaluru.augment_current(all_frame_data)
+        except Exception as _ae:
+            print(f"Mangaluru current-image augmentation failed: {_ae}")
+
+        recent_frame_data = all_frame_data[-6:] if len(all_frame_data) > 6 else all_frame_data
+        verification.verify_pending("mangaluru", all_frame_data, isolate_rain, clutter_mask=None)
+        del all_frame_data
+        clutter_mask = None
+        gc.collect()
+
+        dx, dy, dir_from, dir_to, speed = get_movement_vector(recent_frame_data, clutter_mask=clutter_mask)
+        latest_frame = recent_frame_data[-1][0] if recent_frame_data else None
+        latest_ts    = recent_frame_data[-1][1] if recent_frame_data else None
+        lag_info     = radar_mangaluru.get_radar_lag_mins(latest_ts)
+
+        patches_motion, roi_mask = [], None
+        try:
+            roi_mask = build_roi_mask(
+                georef_mangaluru.latlon_to_pixel, georef_mangaluru.IMAGE_WIDTH,
+                georef_mangaluru.IMAGE_HEIGHT, georef_mangaluru.CENTER_LAT,
+                georef_mangaluru.CENTER_LON, radius_km=150.0,
+            )
+            motion_frames = [p for p, _ in recent_frame_data[-4:]]
+            ts_prev = recent_frame_data[-2][1] if len(recent_frame_data) >= 2 else None
+            ts_last = recent_frame_data[-1][1] if recent_frame_data else None
+            gap = 10.0
+            if ts_prev and ts_last:
+                gap = max(1.0, (ts_last - ts_prev).total_seconds() / 60.0)
+            if len(motion_frames) >= 2:
+                patches_motion = compute_patch_motion(
+                    motion_frames, gap_mins=gap, clutter_mask=clutter_mask,
+                    roi_mask=roi_mask, min_area_px=4,
+                    pixel_to_latlon_fn=georef_mangaluru.pixel_to_latlon,
+                )
+                print(f"  Mangaluru per-patch: {len(patches_motion)} patch(es) (gap={gap:.0f}m)")
+        except Exception as _pe:
+            print(f"  Mangaluru per-patch failed: {_pe}")
+
+        decay_tracks = []
+        try:
+            decay_tracks = compute_decay_tracks(recent_frame_data, dx, dy, clutter_mask=clutter_mask)
+            print(f"  Mangaluru decay tracks: {len(decay_tracks)} patch(es)")
+        except Exception as _de:
+            print(f"  Mangaluru decay tracking failed: {_de}")
+
+        new_state = {
+            "frame_data": recent_frame_data,
+            "recent_frame_data": recent_frame_data,
+            "clutter_mask": clutter_mask,
+            "movement": (dx, dy, dir_from, dir_to, speed),
+            "latest_frame": latest_frame,
+            "latest_ts": latest_ts,
+            "lag_info": lag_info,
+            "patches": patches_motion,
+            "roi_mask": roi_mask,
+            "decay_tracks": decay_tracks,
+            "last_loaded": time.time(),
+            "last_used": time.time(),
+            "gif_mtime": os.path.getmtime(mangaluru_gif) if os.path.exists(mangaluru_gif) else None,
+        }
+        with _mangaluru_state_lock:
+            mangaluru_cache.update(new_state)
+        print("Mangaluru radar: refresh complete")
+        try:
+            if len(recent_frame_data) < 2 or not _mangaluru_scan_fresh(new_state):
+                return
+            alerts.process_alerts("mangaluru", new_state, georef_mangaluru.is_within_radar, georef_mangaluru.latlon_to_pixel)
+        except Exception as _al:
+            print(f"alerts hook failed: {_al}")
+    except Exception as e:
+        print(f"Mangaluru radar: refresh failed: {e}\n{traceback.format_exc()}")
+    finally:
+        _mangaluru_ready.set()
+        _mangaluru_bg_lock.release()
+
+
+def _load_mangaluru_radar_state(ttl_sec: float = RADAR_CACHE_TTL_SEC, *, force: bool = False) -> dict:
+    if not _mangaluru_ready.is_set():
+        threading.Thread(target=_do_mangaluru_refresh, args=(ttl_sec, True), daemon=True).start()
+        _mangaluru_ready.wait(timeout=60)
+        return dict(mangaluru_cache)
+    if not force and _is_fresh(mangaluru_cache, ttl_sec):
+        return dict(mangaluru_cache)
+    threading.Thread(target=_do_mangaluru_refresh, args=(ttl_sec, force), daemon=True).start()
+    return dict(mangaluru_cache)
+
+
 def _do_sohra_refresh(ttl_sec: float, force: bool = False) -> None:
     if not _sohra_bg_lock.acquire(blocking=False):
         return
@@ -1489,15 +1609,32 @@ _RADAR_REGISTRY = {
     "patiala": {"refresh": _do_patiala_refresh, "cache": patiala_cache, "ready": _patiala_ready, "georef": georef_patiala},
     "nagpur":  {"refresh": _do_nagpur_refresh,  "cache": nagpur_cache,  "ready": _nagpur_ready,  "georef": georef_nagpur},
     "sohra":  {"refresh": _do_sohra_refresh,  "cache": sohra_cache,  "ready": _sohra_ready,  "georef": georef_sohra},
+    "mangaluru":  {"refresh": _do_mangaluru_refresh,  "cache": mangaluru_cache,  "ready": _mangaluru_ready,  "georef": georef_mangaluru},
     "mahabaleshwar":  {"refresh": _do_mahabaleshwar_refresh,  "cache": mahabaleshwar_cache,  "ready": _mahabaleshwar_ready,  "georef": georef_mahabaleshwar},
 }
 
 
 def _forecast_ready(name, state):
-    return name not in ('sohra', 'mahabaleshwar') or len(state.get('frame_data') or []) >= 2
+    if name == 'mangaluru' and not _mangaluru_scan_fresh(state):
+        return False
+    return name not in ('sohra', 'mahabaleshwar', 'mangaluru') or len(state.get('frame_data') or []) >= 2
+
+
+def _mangaluru_scan_fresh(state):
+    ts = state.get('latest_ts')
+    return bool(ts and -5 <= (_dt.now(IST) - ts).total_seconds() / 60 <= 90)
+
+
+def _require_mangaluru_fresh(name, state):
+    if name == 'mangaluru' and state.get('latest_ts') and not _mangaluru_scan_fresh(state):
+        stamp = state['latest_ts'].strftime('%d %b %Y %H:%M IST')
+        raise HTTPException(status_code=503, detail=(
+            f'Mangaluru radar feed is stale (last scan: {stamp}). '
+            'Live rain forecasts are unavailable until IMD publishes a new scan.'))
 
 
 def _require_forecast_history(name, state):
+    _require_mangaluru_fresh(name, state)
     if not _forecast_ready(name, state):
         raise HTTPException(status_code=503, detail=(
             f'{name.title()} radar is collecting reflectivity observations. '
@@ -1514,6 +1651,7 @@ _INDIA_RADAR_META = {
     "patna": (25.5913, 85.0956, 300), "bhopal": (23.2875, 77.3374, 300),
     "jaipur": (26.8242, 75.8122, 250), "paradip": (20.2640, 86.6110, 250),
     "patiala": (30.3540, 76.4540, 300), "nagpur": (21.1500, 79.0500, 250),
+    "mangaluru": (12.9037, 74.8620, 250),
     "sohra": (25.2680, 91.7332, 240), "mahabaleshwar": (17.9217, 73.6556, 170),
 }
 
@@ -1524,6 +1662,8 @@ def _build_india_mosaic():
     for name, reg in _RADAR_REGISTRY.items():
         state = _ensure_radar_fresh_blocking(name)
         _touch_radar_and_evict(name)
+        if name == 'mangaluru' and not _mangaluru_scan_fresh(state or {}):
+            continue
         frame = (state or {}).get("latest_frame")
         if frame:
             sources.append((reg["georef"], frame))
@@ -1677,6 +1817,7 @@ def debug_cache():
         "patiala": _summary(patiala_cache, _patiala_ready, radar_patiala.GIF_SAVE_PATH),
         "nagpur":  _summary(nagpur_cache,  _nagpur_ready,  radar_nagpur.GIF_SAVE_PATH),
         "sohra":  _summary(sohra_cache,  _sohra_ready,  radar_sohra.GIF_SAVE_PATH),
+        "mangaluru":  _summary(mangaluru_cache,  _mangaluru_ready,  radar_mangaluru.GIF_SAVE_PATH),
         "mahabaleshwar":  _summary(mahabaleshwar_cache,  _mahabaleshwar_ready,  radar_mahabaleshwar.GIF_SAVE_PATH),
     }
 
@@ -1769,6 +1910,9 @@ def get_radar_gif(radar: str = "delhi"):
     elif radar == "nagpur":
         gif_path = radar_nagpur.GIF_SAVE_PATH
         filename  = "nagpur_radar.gif"
+    elif radar == "mangaluru":
+        gif_path = radar_mangaluru.GIF_SAVE_PATH
+        filename = "mangaluru_radar.gif"
     elif radar == "sohra":
         gif_path = radar_sohra.GIF_SAVE_PATH
         filename  = "sohra_radar.gif"
@@ -1928,6 +2072,9 @@ def predict_waypoints(payload: PredictWaypointsRequest):
         elif radar == "sohra":
             _georef = georef_sohra
             state   = _load_sohra_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
+        elif radar == "mangaluru":
+            _georef = georef_mangaluru
+            state   = _load_mangaluru_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
         elif radar == "mahabaleshwar":
             _georef = georef_mahabaleshwar
             state   = _load_mahabaleshwar_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
@@ -2246,6 +2393,9 @@ def nowcast_location(req: NowcastRequest):
         elif radar == "sohra":
             _georef = georef_sohra
             state   = _load_sohra_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
+        elif radar == "mangaluru":
+            _georef = georef_mangaluru
+            state   = _load_mangaluru_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
         elif radar == "mahabaleshwar":
             _georef = georef_mahabaleshwar
             state   = _load_mahabaleshwar_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
@@ -2256,6 +2406,7 @@ def nowcast_location(req: NowcastRequest):
         _latlon_to_pixel = _georef.latlon_to_pixel
         _is_within_radar = _georef.is_within_radar
         _touch_radar_and_evict(radar)
+        _require_mangaluru_fresh(radar, state)
 
         if not _is_within_radar(req.lat, req.lon):
             return {
@@ -2389,6 +2540,9 @@ def _forecast_render_args(lat: float, lon: float) -> dict:
     elif radar == "sohra":
         _georef = georef_sohra
         state   = _load_sohra_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
+    elif radar == "mangaluru":
+        _georef = georef_mangaluru
+        state   = _load_mangaluru_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
     elif radar == "mahabaleshwar":
         _georef = georef_mahabaleshwar
         state   = _load_mahabaleshwar_radar_state(ttl_sec=RADAR_CACHE_TTL_SEC, force=False)
@@ -2771,10 +2925,10 @@ def _tool_get_nowcast(lat: float, lon: float):
 
 
 def _tool_get_route_rain(start_lat, start_lon, end_lat, end_lon):
-    return predict_rain(RouteRequest(
-        start_lat=start_lat, start_lon=start_lon,
-        end_lat=end_lat, end_lon=end_lon,
-    ))
+    points = generate_waypoints((start_lat, start_lon), (end_lat, end_lon))
+    return predict_waypoints(PredictWaypointsRequest(waypoints=[
+        WaypointInput(lat=lat, lon=lon, eta_mins=eta) for lat, lon, eta in points
+    ]))
 
 
 def _tool_get_rain_movement():
