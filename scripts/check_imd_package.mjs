@@ -15,12 +15,13 @@ const required = [
   'backend/radar_sohra.py', 'backend/georef_sohra.py',
   'backend/radar_mahabaleshwar.py', 'backend/georef_mahabaleshwar.py',
   'backend/radar_mangaluru.py', 'backend/georef_mangaluru.py', 'backend/mangaluru_glyphs.json',
+  'backend/radar_thiruvananthapuram.py', 'backend/georef_thiruvananthapuram.py', 'backend/thiruvananthapuram_digits.json',
 ]
 const missing = required.filter(path => !existsSync(resolve(root, path)))
 assert.equal(missing.length, 0, `Incomplete IMD upload: ${missing.join(', ')}`)
 const read = path => readFileSync(resolve(root, path), 'utf8')
 const main = read('backend/main.py')
-for (const station of ['sohra', 'mahabaleshwar', 'mangaluru']) {
+for (const station of ['sohra', 'mahabaleshwar', 'mangaluru', 'thiruvananthapuram']) {
   assert(main.includes(`import radar_${station}`) && main.includes(`import georef_${station}`))
   assert(main.includes(`"${station}":  {"refresh": _do_${station}_refresh`), `Missing ${station} registry`)
   assert(main.includes(`elif radar == "${station}"`), `Missing ${station} dispatch`)

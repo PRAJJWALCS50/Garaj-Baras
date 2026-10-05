@@ -1899,7 +1899,7 @@ function NowcastPage({ userLoc, activeTab, onChangeTab, onPickSaved, pendingLoc,
             <div className="banner banner--dying">
               <p className="banner__head">{t('Outside radar coverage', 'रडार कवरेज के बाहर')}</p>
               <p className="banner__sub">
-                {t('This location is outside the available IMD radar coverage. Try a location near one of our supported radars, including Mangaluru.', 'यह स्थान उपलब्ध IMD रडार कवरेज के बाहर है। मंगलुरु सहित हमारे समर्थित रडार के पास कोई स्थान आज़माएँ।')}
+                {t('This location is outside the available IMD radar coverage. Try a location near one of our supported radars, including Mangaluru and Thiruvananthapuram.', 'यह स्थान उपलब्ध IMD रडार कवरेज के बाहर है। मंगलुरु और तिरुवनंतपुरम सहित हमारे समर्थित रडार के पास कोई स्थान आज़माएँ।')}
               </p>
             </div>
           ) : (

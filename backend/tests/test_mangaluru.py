@@ -93,7 +93,7 @@ class MangaluruTests(unittest.TestCase):
                 self.assertEqual(len(feed.extract(SOURCE)), 2)
 
     def test_stale_and_single_observation_are_not_forecasts(self):
-        from main import _forecast_ready, _require_forecast_history, _require_mangaluru_fresh
+        from main import _forecast_ready, _require_forecast_history, _require_native_fresh
         from fastapi import HTTPException
         fresh = datetime.now(timezone.utc)
         state = {'latest_ts': fresh, 'frame_data': [('one.png', fresh)]}
@@ -105,7 +105,7 @@ class MangaluruTests(unittest.TestCase):
         state['latest_ts'] = fresh-timedelta(hours=2)
         self.assertFalse(_forecast_ready('mangaluru', state))
         with self.assertRaises(HTTPException) as exc:
-            _require_mangaluru_fresh('mangaluru', state)
+            _require_native_fresh('mangaluru', state)
         self.assertEqual(exc.exception.status_code, 503)
         self.assertIn('stale', exc.exception.detail)
 
