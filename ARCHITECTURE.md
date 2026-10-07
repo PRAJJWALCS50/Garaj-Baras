@@ -626,6 +626,19 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   seconds counter.
 
 - **Route tab (default):** Nominatim place search with autocomplete
+  plus a **Select on map** action below each From/To input. The lazy-loaded
+  `LocationPicker.jsx` opens a responsive Leaflet dialog using the shared light
+  tiles. Pan/zoom, keyboard movement, or tapping positions a fixed center pin;
+  confirmation stores the exact latitude/longitude in `sourcePlace`/`destPlace`
+  with a coordinate label, bypassing geocoding. It starts at the selected
+  user location first and requests a fresh high-accuracy location whenever opened.
+  If permission is denied, GPS times out, or the user is outside India, it falls
+  back to the selected endpoint, the other endpoint, or an India overview. A
+  late GPS result does not move the map after the user starts interacting;
+  the My location button remains available for manual re-centering.
+  Cancel/Escape preserves the inputs, focus returns to the trigger, and points
+  outside the backend's India coordinate bounds cannot be confirmed.
+  Existing place search remains available
   (viewbox-biased), route fetched via OSRM/ORS (needs `VITE_ORS_API_KEY` for
   OpenRouteService), waypoints sampled every ~5 driving minutes and POSTed to
   `/predict_waypoints`. Results render as: `RainTimelineBar` (colored journey

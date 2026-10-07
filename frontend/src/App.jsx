@@ -6,6 +6,7 @@ import { fetchRouteImdWarnings } from './imdWarnings'
 import { ImdRouteWarnings } from './ImdRouteWarnings'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
 import './App.css'
+import './LocationPicker.css'
 import { useAuth, AccountButton, SignInGate } from './auth'
 import { hasPushSupport, publicKeyBytes, subscriptionMatchesKey, activePushRegistration, pushSubscriptionForKey } from './pushAlerts'
 import SavedMenu from './SavedMenu'
@@ -24,6 +25,7 @@ const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse'
 const ORS_KEY = import.meta.env.VITE_ORS_API_KEY
 
 const RouteMap = lazy(() => import('./RouteMap.jsx'))
+const LocationPicker = lazy(() => import('./LocationPicker.jsx'))
 const LiveJourneyPanel = lazy(() => import('./LiveJourney.jsx'))
 
 function warmBackend() {
@@ -2117,6 +2119,8 @@ export default function App() {
   const [journeyMins, setJourneyMins] = useState('')
   const [sourcePlace, setSourcePlace] = useState(null)
   const [destPlace, setDestPlace] = useState(null)
+  const [mapPickerField, setMapPickerField] = useState(null)
+  const [mapPickerTrigger, setMapPickerTrigger] = useState(null)
   const [userLoc, setUserLoc] = useState(null)
 
   const [sourceSug, setSourceSug] = useState([])
@@ -2203,7 +2207,7 @@ export default function App() {
     const q = String(source || '').trim()
     if (sourceAbortRef.current) sourceAbortRef.current.abort()
     if (sourceDebounceRef.current) clearTimeout(sourceDebounceRef.current)
-    if (q.length < 3) { setSourceSug([]); return }
+    if (q.length < 3 || sourcePlace) { setSourceSug([]); return }
     sourceDebounceRef.current = setTimeout(async () => {
       const ac = new AbortController()
       sourceAbortRef.current = ac
@@ -2214,13 +2218,13 @@ export default function App() {
       }
     }, 350)
     return () => { if (sourceDebounceRef.current) clearTimeout(sourceDebounceRef.current) }
-  }, [source])
+  }, [source, sourcePlace])
 
   useEffect(() => {
     const q = String(destination || '').trim()
     if (destAbortRef.current) destAbortRef.current.abort()
     if (destDebounceRef.current) clearTimeout(destDebounceRef.current)
-    if (q.length < 3) { setDestSug([]); return }
+    if (q.length < 3 || destPlace) { setDestSug([]); return }
     destDebounceRef.current = setTimeout(async () => {
       const ac = new AbortController()
       destAbortRef.current = ac
@@ -2231,7 +2235,7 @@ export default function App() {
       }
     }, 350)
     return () => { if (destDebounceRef.current) clearTimeout(destDebounceRef.current) }
-  }, [destination])
+  }, [destination, destPlace])
 
   async function handlePredict() {
     const startCity = source.trim()
@@ -2522,6 +2526,25 @@ export default function App() {
       <ServerWakeNote />
 
       {showOnboarding && <Onboarding onClose={() => setShowOnboarding(false)} />}
+      {mapPickerField && (
+        <Suspense fallback={createPortal(<div className="location-picker-backdrop"><button type="button" className="scan-btn" onClick={() => setMapPickerField(null)}>{t('Loading map… · Cancel', 'नक्शा लोड हो रहा है… · रद्द करें')}</button></div>, document.body)}>
+          <LocationPicker
+            field={mapPickerField}
+            returnFocusTo={mapPickerTrigger}
+            initialPlace={(mapPickerField === 'source' ? sourcePlace : destPlace) || (mapPickerField === 'source' ? destPlace : sourcePlace)}
+            userLoc={userLoc}
+            onClose={() => setMapPickerField(null)}
+            onConfirm={place => {
+              if (mapPickerField === 'source') {
+                setSource(place.display_name); setSourcePlace(place); setSourceSug([])
+              } else {
+                setDestination(place.display_name); setDestPlace(place); setDestSug([])
+              }
+              setMapPickerField(null)
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* ── NOWCAST PAGE ──
           Tabs stay MOUNTED after their first visit and are hidden with CSS,
@@ -2660,6 +2683,10 @@ export default function App() {
                           </div>
                         )}
                       </div>
+                      <button type="button" className="route-map-select" onClick={event => { setMapPickerTrigger(event.currentTarget); setSourceOpen(false); setDestOpen(false); setMapPickerField('source') }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 22s8-8 8-14a8 8 0 1 0-16 0c0 6 8 14 8 14Z" stroke="currentColor" strokeWidth="1.8" /><circle cx="12" cy="8" r="3" stroke="currentColor" strokeWidth="1.8" /></svg>
+                        {t('Select on map', 'नक्शे पर चुनें')}
+                      </button>
                     </div>
                   </div>
 
@@ -2703,6 +2730,10 @@ export default function App() {
                           </div>
                         )}
                       </div>
+                      <button type="button" className="route-map-select" onClick={event => { setMapPickerTrigger(event.currentTarget); setSourceOpen(false); setDestOpen(false); setMapPickerField('destination') }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 22s8-8 8-14a8 8 0 1 0-16 0c0 6 8 14 8 14Z" stroke="currentColor" strokeWidth="1.8" /><circle cx="12" cy="8" r="3" stroke="currentColor" strokeWidth="1.8" /></svg>
+                        {t('Select on map', 'नक्शे पर चुनें')}
+                      </button>
                     </div>
                   </div>
                 </div>
