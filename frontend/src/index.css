@@ -5,10 +5,10 @@
 }
 
 body {
-  background-color: #0A0F1E;
+  background-color: #071322;
   color: #FFFFFF;
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-  max-width: 430px;
+  width: 100%;
   margin: 0 auto;
   min-height: 100vh;
 }

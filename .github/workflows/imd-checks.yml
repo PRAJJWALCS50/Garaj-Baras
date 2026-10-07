@@ -34,6 +34,7 @@ jobs:
           python -m unittest discover -s backend/tests -p 'test_native_radars.py'
           python -m unittest discover -s backend/tests -p 'test_mangaluru.py'
           python -m unittest discover -s backend/tests -p 'test_thiruvananthapuram.py'
+          python -m unittest discover -s backend/tests -p 'test_radar_overlay.py'
       - name: Test AI location fallback and provider failures
         run: python -m unittest discover -s backend/tests -p 'test_chatbot.py'
       - name: Test notification retries and browser subscription recovery
