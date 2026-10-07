@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from './leafletSetup'
 import 'leaflet-rotate'
-import { MapContainer, Marker, Popup, Polyline, TileLayer, CircleMarker, Tooltip } from 'react-leaflet'
+import { MapContainer, Marker, Popup, Polyline, TileLayer } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useT, tr } from './i18n'
 import { FOG_COLORS, fogZones } from './fog'
 import { baseTiles } from './mapTiles'
-import RadarOverlay from './RadarOverlay'
 
 // Localize a backend rain-intensity label for display.
 function rainLabelTr(label) {
@@ -184,8 +183,6 @@ function endpointIcon(kind) {
 }
 
 export default function RouteMap({
-  apiBase,
-  previewPoint,
   routeCoords,
   routeSegments,
   waypoints,
@@ -203,9 +200,8 @@ export default function RouteMap({
   const t = useT()
   const [mapRef, setMapRef] = useState(null)
   const isLive = !!livePos
-  const [radarOn, setRadarOn] = useState(false)
   const [rainLayerOn, setRainLayerOn] = useState(true)
-  const [fogLayerOn, setFogLayerOn] = useState(false)
+  const [fogLayerOn, setFogLayerOn] = useState(true)
   const [fogOptionsOpen, setFogOptionsOpen] = useState(false)
   const [fogSource, setFogSource] = useState(null)
   const showRain = navMode ? weatherMode !== 'fog' : rainLayerOn
@@ -414,10 +410,6 @@ export default function RouteMap({
     [heading, bearingDeg],
   )
 
-  useEffect(() => {
-    if (mapRef && previewPoint && !navMode) mapRef.panTo([previewPoint.lat, previewPoint.lon], { animate: false })
-  }, [mapRef, previewPoint, navMode])
-
   // ── Map fit ──────────────────────────────────────────────────────────────
   const midpoint = routeCoords?.length
     ? routeCoords[Math.floor(routeCoords.length / 2)]
@@ -478,14 +470,13 @@ export default function RouteMap({
         shiftKeyRotate={false}
       >
         <TileLayer {...baseTiles(navMode ? 'nav' : 'route')} />
-        {radarOn && apiBase && !navMode && <RadarOverlay key={midpoint.join(',')} apiBase={apiBase} point={midpoint} />}
 
         {Array.isArray(routeCoords) && routeCoords.length > 0 && (
           <>
             {/* Route = white line with a dark outline; the rain-coded segments on top are the star */}
             <Polyline positions={routeCoords} color="#FFFFFF" weight={navMode ? 24 : 16} opacity={0.10} interactive={false} />
             <Polyline positions={routeCoords} color="#0B1220" weight={navMode ? 13 : 9} opacity={0.9} interactive={false} />
-            <Polyline positions={routeCoords} color="#308bff" weight={navMode ? 9 : 6} opacity={1} interactive={false} />
+            <Polyline positions={routeCoords} color="#FFFFFF" weight={navMode ? 9 : 6} opacity={1} interactive={false} />
           </>
         )}
 
@@ -494,7 +485,7 @@ export default function RouteMap({
             <Polyline
               key={`seg-${idx}`}
               positions={seg.positions}
-              color={seg.inBounds && seg.label === 'No Rain' ? '#308bff' : seg.color}
+              color={seg.color}
               weight={navMode ? 9 : 6}
               opacity={0.92}
               eventHandlers={{ click: () => openSegmentPopup(seg) }}
@@ -515,9 +506,6 @@ export default function RouteMap({
           />
         ))}
 
-        {previewPoint && !navMode && <CircleMarker center={[previewPoint.lat, previewPoint.lon]} radius={10} pathOptions={{ color: '#fff', fillColor: '#308bff', fillOpacity: 1, weight: 3 }}>
-          <Tooltip permanent direction="top">+{Math.round(previewPoint.eta_mins)} {t('min', 'मिनट')}</Tooltip>
-        </CircleMarker>}
         {/* Start / destination markers */}
         {Array.isArray(routeCoords) && routeCoords.length >= 2 && (
           <>
@@ -633,7 +621,6 @@ export default function RouteMap({
 
       {/* Navigation selects one weather view; the results map keeps independent overlays. */}
       <div className={`map-layers${navMode ? ' map-layers--nav' : ''}`}>
-        {apiBase && !navMode && <button type="button" className={`map-layer-btn${radarOn ? ' is-on' : ''}`} aria-pressed={radarOn} onClick={() => setRadarOn(v => !v)}>◎ <span>{t('Radar', 'रडार')}</span></button>}
         <button
           type="button"
           className={`map-layer-btn${showRain ? ' is-on' : ''}`}
@@ -672,7 +659,7 @@ export default function RouteMap({
               {[
                 { id: 'satellite', label: t('Satellite', 'सैटेलाइट') },
                 { id: 'ecmwf', label: 'ECMWF' },
-                { id: 'general-model', label: t('Our model', 'हमारा मॉडल') },
+                { id: 'general-model', label: t('General Model', 'सामान्य मॉडल') },
               ].map((source) => (
                 <button type="button" key={source.id}
                   className={`fog-options__button${fogSource === source.id ? ' is-selected' : ''}`}
@@ -688,7 +675,7 @@ export default function RouteMap({
                   {fogSource === source.id && <span aria-hidden>✓</span>}
                 </button>
               ))}
-              {fogSource && <p className="fog-options__status" role="status">{t('Data unavailable', 'डेटा उपलब्ध नहीं')}</p>}
+              {fogSource && <p className="fog-options__status" role="status">{t('No fog', 'कोहरा नहीं')}</p>}
             </div>
           )}
         </div>

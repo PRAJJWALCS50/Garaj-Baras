@@ -1945,42 +1945,6 @@ def debug_cache():
     }
 
 
-# Small per-station observed overlay; one cache entry and a serialized renderer
-# avoid multiplying memory usage on the 512 MB instance.
-_route_overlay_lock = threading.Lock()
-_route_overlay_cache = {"key": None, "data": None, "built_at": 0.0}
-
-
-@app.get("/radar/overlay")
-def route_radar_overlay(lat: float, lon: float):
-    if not (6 <= lat <= 38 and 68 <= lon <= 98):
-        raise HTTPException(status_code=400, detail="Coordinates outside India bounds.")
-    name = _detect_radar(lat, lon)
-    reg = _RADAR_REGISTRY[name]
-    if not reg["georef"].is_within_radar(lat, lon):
-        raise HTTPException(status_code=404, detail="No radar coverage at this location.")
-    with _route_overlay_lock:
-        state = _ensure_radar_fresh_blocking(name)
-        _touch_radar_and_evict(name)
-        frames = list((state or {}).get("frame_data") or [])
-        if not frames:
-            raise HTTPException(status_code=503, detail="Radar is warming up. Try again shortly.")
-        now = _dt.now(IST)
-        recent = [(p, ts) for p, ts in frames if ts.tzinfo and 0 <= (now - ts).total_seconds() <= 5400]
-        if not recent:
-            raise HTTPException(status_code=503, detail="Radar scans are stale. Observed overlay unavailable.")
-        key = (name, tuple(ts.isoformat() for _, ts in recent))
-        if _route_overlay_cache["key"] != key or time.time() - _route_overlay_cache["built_at"] > 300:
-            from radar_overlay import build_overlay
-            try:
-                data = build_overlay(name, reg["georef"], recent, now)
-            except (ValueError, OSError):
-                raise HTTPException(status_code=503, detail="Radar imagery is unavailable. Try again shortly.")
-            data["range_km"] = _INDIA_RADAR_META[name][2]
-            _route_overlay_cache.update(key=key, data=data, built_at=time.time())
-        return _route_overlay_cache["data"]
-
-
 @app.get("/india-radar/metadata")
 def india_radar_metadata():
     """Station locations/ranges for the standalone national mosaic UI."""

@@ -7,9 +7,7 @@ import assert from 'node:assert/strict'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const required = [
   '.gitignore', 'ARCHITECTURE.md', '.github/workflows/keepalive.yml',
-  'backend/main.py', 'backend/imd_warnings.py', 'backend/radar_overlay.py',
-  'frontend/src/RadarOverlay.jsx', 'frontend/src/PlannerMap.jsx',
-  'frontend/src/JourneyWeather.jsx', 'frontend/src/JourneyDesign.css',
+  'backend/main.py', 'backend/imd_warnings.py',
   'backend/data/imd_north_districts.geojson', 'frontend/src/App.jsx',
   'frontend/src/App.css', 'frontend/src/imdWarnings.js',
   'frontend/src/ImdRouteWarnings.jsx',

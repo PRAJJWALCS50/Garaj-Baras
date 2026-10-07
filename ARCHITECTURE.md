@@ -812,26 +812,3 @@ npm run dev                      # talks to http://127.0.0.1:8000 automatically
 
 First request per radar triggers a full GIF download + processing (~5–8 s);
 subsequent requests are served from cache (<50 ms) for 10 minutes.
-
-## Map-first frontend (2026-10-07)
-
-The route planner now uses a full-width desktop map/sidebar workspace and a
-mobile map/bottom-sheet layout (`JourneyDesign.css`, `PlannerMap.jsx`). Existing
-route, nowcast, account, push alerts, Hindi, and navigation flows remain shared.
-`JourneyWeather.jsx` scrubs actual route forecast waypoints and opens existing
-point weather details. Travel times are explicitly estimates; there is no live
-traffic or unsupported departure comparison. Unintegrated fog sources show data
-unavailable rather than clear-weather claims.
-
-Results maps optionally load `GET /radar/overlay?lat=...&lon=...` for the station
-covering the route midpoint. `radar_overlay.py` renders up to four measured scans
-from the existing station history through the existing georeference and the
-Web Mercator renderer (`india_mosaic.render_png` now accepts optional bounds and
-size). It returns transparent 640px PNGs, geographic bounds, UTC timestamps,
-station center and range. It rejects missing, future, naive, and >90-minute-old
-scan timestamps; invalid/missing imagery fails closed. A single bounded payload
-cache and serialized render lock avoid loading a nationwide mosaic. Existing
-two-radar heavy-state LRU remains in use. This is observed playback, explicitly
-separate from route forecasts. `RadarOverlay.jsx` provides playback, opacity,
-refresh, station coverage, IST scan time, scan age and stale/error states; images
-sit below route lines. Only one station is shown, not full-route radar coverage.

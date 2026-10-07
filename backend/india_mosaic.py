@@ -18,7 +18,7 @@ _MERC_NORTH = math.log(math.tan(math.pi / 4 + math.radians(NORTH) / 2))
 _MAX_MERCATOR_LAT = 85.05112878
 
 
-def render_png(sources, *, bounds=None, width=WIDTH, height=HEIGHT):
+def render_png(sources):
     """Return a transparent PNG with all available station echoes blended.
 
     ``sources`` is an iterable of (georef_module, image_path).  Pixels outside
@@ -26,11 +26,8 @@ def render_png(sources, *, bounds=None, width=WIDTH, height=HEIGHT):
     show through.  Overlaps are weighted toward each radar's centre, avoiding
     stacked opaque images and making joins gradual.
     """
-    south, west, north, east = bounds or (SOUTH, WEST, NORTH, EAST)
-    merc_south = math.log(math.tan(math.pi / 4 + math.radians(south) / 2))
-    merc_north = math.log(math.tan(math.pi / 4 + math.radians(north) / 2))
-    rgb_sum = np.zeros((height, width, 3), dtype=np.float32)
-    weight_sum = np.zeros((height, width), dtype=np.float32)
+    rgb_sum = np.zeros((HEIGHT, WIDTH, 3), dtype=np.float32)
+    weight_sum = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
 
     for georef, frame_path in sources:
         if not frame_path:
@@ -53,13 +50,13 @@ def render_png(sources, *, bounds=None, width=WIDTH, height=HEIGHT):
             # theoretical footprint near the crop edge; clamp before applying
             # Web Mercator math so one outlier cannot fail the whole mosaic.
             lat = max(-_MAX_MERCATOR_LAT, min(_MAX_MERCATOR_LAT, lat))
-            ox = int((lon - west) / (east - west) * (width - 1))
+            ox = int((lon - WEST) / (EAST - WEST) * (WIDTH - 1))
             # Leaflet's ImageOverlay is positioned in Web Mercator; render in
             # that same vertical coordinate so the mosaic stays aligned while
             # users pan and zoom the OSM map.
             merc_lat = math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
-            oy = int((merc_north - merc_lat) / (merc_north - merc_south) * (height - 1))
-            if not (0 <= ox < width and 0 <= oy < height):
+            oy = int((_MERC_NORTH - merc_lat) / (_MERC_NORTH - _MERC_SOUTH) * (HEIGHT - 1))
+            if not (0 <= ox < WIDTH and 0 <= oy < HEIGHT):
                 continue
             # Feather near the source edge.  The radial distance is an
             # approximation for legacy rectangular crops, but matches the
@@ -68,12 +65,12 @@ def render_png(sources, *, bounds=None, width=WIDTH, height=HEIGHT):
             edge = max(1.0, min(georef.IMAGE_WIDTH, georef.IMAGE_HEIGHT) / 2.0)
             radial = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 / edge
             weight = max(0.12, 1.0 - max(0.0, radial - 0.70) / 0.30)
-            y2, x2 = min(height, oy + 2), min(width, ox + 2)
+            y2, x2 = min(HEIGHT, oy + 2), min(WIDTH, ox + 2)
             rgb_sum[oy:y2, ox:x2] += image[y, x].astype(np.float32) * weight
             weight_sum[oy:y2, ox:x2] += weight
 
     alpha = weight_sum > 0
-    out = np.zeros((height, width, 4), dtype=np.uint8)
+    out = np.zeros((HEIGHT, WIDTH, 4), dtype=np.uint8)
     out[..., :3][alpha] = (rgb_sum[alpha] / weight_sum[alpha, None]).astype(np.uint8)
     out[..., 3] = np.where(alpha, 215, 0).astype(np.uint8)
     result = BytesIO()

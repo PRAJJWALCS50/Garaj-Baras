@@ -6,8 +6,6 @@ import { fetchRouteImdWarnings } from './imdWarnings'
 import { ImdRouteWarnings } from './ImdRouteWarnings'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
 import './App.css'
-import './JourneyDesign.css'
-import JourneyWeather from './JourneyWeather'
 import './LocationPicker.css'
 import { useAuth, AccountButton, SignInGate } from './auth'
 import { hasPushSupport, publicKeyBytes, subscriptionMatchesKey, activePushRegistration, pushSubscriptionForKey } from './pushAlerts'
@@ -27,7 +25,6 @@ const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse'
 const ORS_KEY = import.meta.env.VITE_ORS_API_KEY
 
 const RouteMap = lazy(() => import('./RouteMap.jsx'))
-const PlannerMap = lazy(() => import('./PlannerMap.jsx'))
 const LocationPicker = lazy(() => import('./LocationPicker.jsx'))
 const LiveJourneyPanel = lazy(() => import('./LiveJourney.jsx'))
 
@@ -194,16 +191,11 @@ function computeRainTimeline(waypoints) {
   const lastEta = Number(sorted[sorted.length - 1].eta_mins) || 0
   const firstEta = Number(sorted[0].eta_mins) || 0
 
-  if (!patches.length && sorted.some(w => w.in_radar_bounds !== true)) {
-    return { tone: 'unknown', headline: tr('Radar coverage is incomplete', 'रडार कवरेज अधूरा है'),
-      secondary: tr('Some route points have no radar data. Check the gray sections on your route.', 'कुछ बिंदुओं पर रडार डेटा नहीं है। रास्ते के ग्रे हिस्से देखें।'),
-      patches: [], closest: null, lastEta }
-  }
   if (!patches.length) {
     return {
       tone: 'clear',
       headline: tr('No rain on route', 'रास्ते में बारिश नहीं'),
-      secondary: tr('No rain predicted at the sampled route points. Conditions can change.', 'जाँचे गए रास्ते के बिंदुओं पर बारिश का अनुमान नहीं। मौसम बदल सकता है।'),
+      secondary: tr('Clear skies expected all the way.', 'पूरे रास्ते साफ आसमान की उम्मीद है।'),
       patches: [],
       closest: null,
       lastEta,
@@ -515,7 +507,7 @@ function TabBar({ activeTab, onChangeTab }) {
         className={`tab-bar__btn${activeTab === 'route' ? ' tab-bar__btn--active' : ''}`}
         onClick={() => onChangeTab('route')}
       >
-        {t('Journey planner', 'यात्रा योजना')}
+        {t('Route', 'रास्ता')}
       </button>
       <button
         role="tab"
@@ -656,11 +648,11 @@ function ChatPage({ activeTab, onChangeTab, onPickSaved }) {
     return (
       <div className="pg-chat">
         <nav className="nav">
-          <span className="nav__brand"><img src="/favicon.svg" alt="" />GARAJ<span className="brand-accent">BARAS</span></span>
+          <span className="nav__brand">GARAJ BARAS</span>
           <span className="nav__right">
             <span className="nav__live" aria-hidden>
               <span className="nav__live-dot" />
-              {t('RADAR WEATHER', 'रडार मौसम')}
+              {t('LIVE', 'लाइव')}
             </span>
             <LangToggle />
             <AccountButton />
@@ -679,11 +671,11 @@ function ChatPage({ activeTab, onChangeTab, onPickSaved }) {
   return (
     <div className="pg-chat">
       <nav className="nav">
-        <span className="nav__brand"><img src="/favicon.svg" alt="" />GARAJ<span className="brand-accent">BARAS</span></span>
+        <span className="nav__brand">GARAJ BARAS</span>
         <span className="nav__right">
           <span className="nav__live" aria-hidden>
             <span className="nav__live-dot" />
-            {t('RADAR WEATHER', 'रडार मौसम')}
+            {t('LIVE', 'लाइव')}
           </span>
           <LangToggle />
           <AccountButton />
@@ -1756,11 +1748,11 @@ function NowcastPage({ userLoc, activeTab, onChangeTab, onPickSaved, pendingLoc,
   return (
     <div className="pg-nowcast">
       <nav className="nav">
-        <span className="nav__brand"><img src="/favicon.svg" alt="" />GARAJ<span className="brand-accent">BARAS</span></span>
+        <span className="nav__brand">GARAJ BARAS</span>
         <span className="nav__right">
           <span className="nav__live" aria-hidden>
             <span className="nav__live-dot" />
-            {t('RADAR WEATHER', 'रडार मौसम')}
+            {t('LIVE', 'लाइव')}
           </span>
           <LangToggle />
           <AccountButton />
@@ -2149,7 +2141,6 @@ export default function App() {
   const [routeSegments, setRouteSegments] = useState([])
   const [activeSeg, setActiveSeg] = useState(null)
   const [journeyStop, setJourneyStop] = useState(null)
-  const [previewPoint, setPreviewPoint] = useState(null)
   const [routeDistanceKm, setRouteDistanceKm] = useState(null)
   const [showBreakdown, setShowBreakdown] = useState(false)
   const [error, setError] = useState(null)
@@ -2259,7 +2250,7 @@ export default function App() {
     }
     if (!ORS_KEY) { setError(t('Missing ORS API key. Set `VITE_ORS_API_KEY` in frontend/.env.', 'ORS API key नहीं है। frontend/.env में `VITE_ORS_API_KEY` सेट करें।')); return }
 
-    setError(null); setLoading(true); setResult(null); setPreviewPoint(null)
+    setError(null); setLoading(true); setResult(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null)
     setScanning(false); setScanStatus('')
     warmBackend()
@@ -2483,7 +2474,6 @@ export default function App() {
   const rainSummary = useMemo(() => {
     if (!result || result._pending) return null
     const tl = rainTimeline
-    if (tl?.tone === 'unknown') return { tone: 'muted', text: tr('Incomplete radar coverage', 'अधूरा रडार कवरेज') }
     if (!tl || tl.tone === 'clear' || !tl.closest) return { tone: 'clear', text: tr('No rain on route', 'रास्ते में बारिश नहीं') }
     const firstEta = Number(tl.closest.startMin) || 0
     const lastEta = Number(tl.lastEta) || 0
@@ -2512,7 +2502,7 @@ export default function App() {
 
   function handleBackToPlanner() {
     endLiveJourney()
-    setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null); setPreviewPoint(null)
+    setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null); setShowBreakdown(false)
     setRadarDown(false); setRouteSteps([]); setRouteImd(null)
   }
@@ -2597,18 +2587,12 @@ export default function App() {
           {/* PLANNER SCREEN */}
           {!loading && !result && (
             <div className="pg-planner">
-              <div className="planner-map-surface">
-                <Suspense fallback={<div className="map-placeholder">{t('Loading map…', 'नक्शा लोड हो रहा है…')}</div>}>
-                  <PlannerMap source={sourcePlace} destination={destPlace} />
-                </Suspense>
-                <div className="planner-map-caption"><span className="eyebrow">{t('YOUR JOURNEY, IN VIEW', 'आपकी यात्रा, एक नज़र में')}</span><strong>{t('Every turn. Every weather change.', 'हर मोड़। मौसम का हर बदलाव।')}</strong><span>{t('Choose your route to see the weather ahead.', 'आगे का मौसम देखने के लिए रास्ता चुनें।')}</span></div>
-              </div>
               <nav className="nav">
-                <span className="nav__brand"><img src="/favicon.svg" alt="" />GARAJ<span className="brand-accent">BARAS</span></span>
+                <span className="nav__brand">GARAJ BARAS</span>
                 <span className="nav__right">
                   <span className="nav__live" aria-hidden>
                     <span className="nav__live-dot" />
-                    {t('RADAR WEATHER', 'रडार मौसम')}
+                    {t('LIVE', 'लाइव')}
                   </span>
                   <LangToggle />
                   <AccountButton />
@@ -2619,8 +2603,8 @@ export default function App() {
               <TabBar activeTab={activeTab} onChangeTab={handleTabChange} />
 
               <section className="hero">
-                <p className="eyebrow">{t('A LITTLE FORESIGHT. A BETTER JOURNEY.', 'मौसम की जानकारी। बेहतर यात्रा।')}</p>
-                <h1 className="hero__title">{t('Know the weather', 'मौसम की स्थिति जानें')}<br /><span>{t('before you leave.', 'निकलने से पहले।')}</span></h1><p className="hero__sub">{t('A clearer picture of the road ahead.', 'आगे के रास्ते की साफ तस्वीर।')}</p>
+                <div className="hero__glow" aria-hidden />
+                <h1 className="hero__title">{t('Know the weather conditions', 'मौसम की स्थिति जानें')}<br />{t('before you leave.', 'निकलने से पहले।')}</h1>
                 <button
                   type="button"
                   className="hero__how"
@@ -2649,7 +2633,6 @@ export default function App() {
                         <div className="rf-shell">
                           <input
                             className="rf-input"
-                            aria-label={t('Starting city', 'शुरुआती शहर')}
                             placeholder={t('Starting city', 'शुरुआती शहर')}
                             value={source}
                             onChange={(e) => { setSource(e.target.value); setSourcePlace(null); setSourceOpen(true) }}
@@ -2723,7 +2706,6 @@ export default function App() {
                         <div className="rf-shell">
                           <input
                             className="rf-input"
-                            aria-label={t('Destination city', 'मंज़िल शहर')}
                             placeholder={t('Destination city', 'मंज़िल शहर')}
                             value={destination}
                             onChange={(e) => { setDestination(e.target.value); setDestPlace(null); setDestOpen(true) }}
@@ -2785,7 +2767,6 @@ export default function App() {
                         <input
                           className="rf-input"
                           inputMode="decimal"
-                          aria-label={t('Average speed in km/h', 'औसत गति किमी/घंटा')}
                           placeholder="55"
                           value={avgSpeedKmh}
                           onChange={(e) => setAvgSpeedKmh(e.target.value)}
@@ -2794,7 +2775,6 @@ export default function App() {
                         <input
                           className="rf-input"
                           inputMode="decimal"
-                          aria-label={t('Journey time in minutes', 'यात्रा समय मिनट में')}
                           placeholder="90"
                           value={journeyMins}
                           onChange={(e) => setJourneyMins(e.target.value)}
@@ -2820,7 +2800,6 @@ export default function App() {
                   )}
                 </div>
 
-                <p className="planner-note">{t('Departure: now · Travel time is estimated, not live traffic.', 'प्रस्थान: अभी · यात्रा समय अनुमानित है, लाइव ट्रैफिक नहीं।')}</p>
                 {/* Scan CTA */}
                 <button
                   className="scan-btn"
@@ -2831,7 +2810,7 @@ export default function App() {
                     !(tripInputMode === 'speed' ? String(avgSpeedKmh).trim() : String(journeyMins).trim())
                   }
                 >
-                  {t('Check my journey', 'मेरी यात्रा जाँचें')}
+                  {t('Scan My Route', 'मेरा रास्ता स्कैन करें')}
                   <svg className="scan-btn__icon" viewBox="0 0 20 20" fill="none" aria-hidden>
                     <path
                       d="M4 10h12M11 5l5 5-5 5"
@@ -2879,14 +2858,13 @@ export default function App() {
                   <svg viewBox="0 0 20 20" fill="none" width="15" height="15" aria-hidden>
                     <path d="M13 4l-6 6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  {t('Edit journey', 'यात्रा बदलें')}
+                  {t('Back', 'वापस')}
                 </button>
                 <span className={`status-pill status-pill--${result._pending ? 'pending' : liveActive ? 'live' : hasRain ? 'rain' : 'clear'}`}>
-                  {result._pending ? t('Scanning…', 'स्कैन हो रहा है…') : liveActive ? t('● LIVE', '● लाइव') : hasRain ? t('Rain ahead', 'आगे बारिश') : rainTimeline?.tone === 'unknown' ? t('Limited coverage', 'सीमित कवरेज') : t('No rain predicted', 'बारिश का अनुमान नहीं')}
+                  {result._pending ? t('Scanning…', 'स्कैन हो रहा है…') : liveActive ? t('● LIVE', '● लाइव') : hasRain ? t('Rain ahead', 'आगे बारिश') : t('Clear skies', 'साफ आसमान')}
                 </span>
               </nav>
 
-              <TabBar activeTab={activeTab} onChangeTab={handleTabChange} />
               {/* Map */}
               <div className="map-wrap">
                 <Suspense
@@ -2908,9 +2886,7 @@ export default function App() {
                     onStopDetails={(stop) => setJourneyStop({ ...stop, requestId: Date.now() })}
                     livePos={null}
                     fog={routeFog}
-                    height="100%"
-                    apiBase={API_BASE}
-                    previewPoint={previewPoint}
+                    height="46vh"
                   />
                 </Suspense>
                 {scanning && (
@@ -2924,8 +2900,6 @@ export default function App() {
                 )}
               </div>
 
-              <div className="results-sidebar">
-              <p className="eyebrow results-eyebrow">{t('YOUR JOURNEY', 'आपकी यात्रा')}</p>
               {/* Route card — Google Maps style summary + actions */}
               <section className="route-card" aria-label={t('Route summary', 'रास्ता सारांश')}>
                 <div className="rc-places">
@@ -2953,7 +2927,7 @@ export default function App() {
                       <span aria-hidden>🌫</span>{' '}
                       {fogSummary
                         ? t(`Fog on ~${Math.round(fogSummary.km)} km · ${fmtVisibility(fogSummary.minVis)}`, `~${Math.round(fogSummary.km)} किमी पर कोहरा · ${fmtVisibility(fogSummary.minVis)}`)
-                        : t('Fog data unavailable', 'कोहरे का डेटा उपलब्ध नहीं')}
+                        : routeFog ? t('No fog', 'कोहरा नहीं') : t('Checking fog…', 'कोहरा जाँच रहे हैं…')}
                     </span>
                     {result.radar_message && <span className="rc-chip rc-chip--muted"><span aria-hidden>📡</span> {result.radar_message}</span>}
                   </div>
@@ -2996,7 +2970,6 @@ export default function App() {
                 )}
               </section>
 
-              <p className="journey-estimate-note">{t('Departure: now · ETA based on your travel estimate.', 'प्रस्थान: अभी · आपके अनुमान के अनुसार पहुँच समय।')}</p>
               {/* Rain narrative banner */}
               {rainTimeline && !result._pending && (
                 <div
@@ -3018,7 +2991,6 @@ export default function App() {
                 </div>
               )}
 
-              {!result._pending && <JourneyWeather waypoints={result.waypoints || []} onPreview={setPreviewPoint} onSelect={point => setJourneyStop({ ...point, requestId: Date.now() })} />}
               {/* Timeline */}
               {rainTimeline?.tone === 'rain' && !result._pending && (
                 <RainTimelineBar
@@ -3031,7 +3003,6 @@ export default function App() {
 
               {/* IMD district warnings on the route */}
               <ImdRouteWarnings data={routeImd} t={t} />
-              </div>
 
               {liveActive && !result._pending && routeCoords.length >= 2 && createPortal(
                 <div className="nav-screen" role="dialog" aria-label={t('Navigation', 'नेविगेशन')}>
