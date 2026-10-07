@@ -604,7 +604,7 @@ export default function LiveJourneyPanel({
   }
   const fogStatus = fogChip || (fog == null
     ? t('Checking fog…', 'कोहरा जाँच रहे हैं…')
-    : t('No fog', 'कोहरा नहीं'))
+    : t('Fog data unavailable', 'कोहरे का डेटा उपलब्ध नहीं'))
 
   // Navigating from the entered source while the user isn't on the route yet
   const fromSource = sourceName || t('the start', 'शुरुआती बिंदु')
