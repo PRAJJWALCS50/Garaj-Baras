@@ -33,9 +33,18 @@ CLEAR, FOG, UNKNOWN = 0, 1, 2
 
 # ── Products ────────────────────────────────────────────────────────────────
 DIST_MAX_KM = 150.0           # distance-to-fog is capped here
-SPEED_MAX_KMH = 40.0          # fog edges faster than this are treated as noise
-SPEED_MAX_GAP_MIN = 75        # frames further apart than this -> no speed
-SPEED_AGREE_KMH = 6.0         # two speed estimates must agree within this (or 50%)
+
+# ── Fog patch tracking ──────────────────────────────────────────────────────
+# Touching fog pixels (8 neighbours) form a patch. Each patch is matched with the
+# previous scene by OVERLAP (fog barely moves, so a patch overlaps itself):
+#   no overlap -> born, one parent -> tracked, several parents -> merged,
+#   parent with several children -> split, no usable previous scene -> untracked
+PATCH_MIN_PIXELS = 3          # smaller fog specks are not tracked (still count as fog)
+PATCH_OVERLAP_MIN = 0.3       # overlap / (smaller of the two patches) to call them linked
+PATCH_MAX_GAP_MIN = 75        # previous scene older than this -> no tracking
+PATCH_GROWTH_MAX_KMH = 40.0   # faster radius change = noise -> no growth value
+PATCH_DRIFT_MAX_KMH = 60.0    # faster centre movement = noise -> no drift value
+PATCH_SMOOTH = 0.5            # weight of the new growth/drift vs the patch's previous value
 
 # ── Storage (Supabase Storage, public-read bucket) ──────────────────────────
 BUCKET = "fog-satellite"

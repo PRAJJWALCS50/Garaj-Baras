@@ -28,7 +28,7 @@ export const FOG_COLORS = {
 // Backend: POST /fog/satellite → per-waypoint status from the newest precomputed
 // fog map (satellite_worker/ → Supabase Storage). The satellite sees fog, not
 // visibility, so visM stays NaN and the level encodes how sure we are.
-const SAT_LEVEL = { fog: 'thick', patchy: 'fog', approaching: 'fog' }
+const SAT_LEVEL = { fog: 'thick', patchy: 'fog', approaching: 'fog', forming: 'fog' }
 
 export async function fetchSatelliteFog(apiBase, waypoints, signal) {
   const wps = (waypoints || []).filter(
@@ -67,6 +67,8 @@ export function satelliteNote(scene, points, t) {
   if (state !== 'ok') return t('Satellite fog unavailable', 'सैटेलाइट कोहरा उपलब्ध नहीं')
   const unknown = (points || []).filter((p) => p.status === 'unknown').length
   if (unknown) return t(`Cloud hides ${unknown} point(s) — fog unknown there`, `${unknown} बिंदु बादल से छिपे — वहाँ कोहरा अज्ञात`)
+  const forming = (points || []).filter((p) => p.status === 'forming').length
+  if (forming) return t(`New fog forming near ${forming} point(s)`, `${forming} बिंदुओं के पास नया कोहरा बन रहा है`)
   return null
 }
 

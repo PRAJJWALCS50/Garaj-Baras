@@ -533,16 +533,20 @@ coverage) night images. **All heavy work happens outside Render:** the
 `fog_satellite.yml` GitHub Action runs `satellite_worker/run.py` every 30 min at
 night; it downloads the newest scan, keeps the 3.9/10.8 µm channels on a 0.05°
 grid over 72–89°E, 23–33°N, classifies each pixel (fog = T10.8−T3.9 > 2.5 K with a
-warm top; unknown = cold high cloud or sun above −3°), computes distance-to-fog
-and fog-edge approach speed (two 30-min estimates must agree), and uploads
-`scenes/<time>.npz` (~100–300 KB) + `latest.json` to the public Supabase Storage
-bucket `fog-satellite`. Daytime runs only record `status: day`.
+warm top; unknown = cold high cloud or sun above −3°), computes distance-to-fog,
+splits fog into **patches** (touching pixels) and tracks them against the
+previous scene by pixel overlap (born / tracked / merged / split / untracked,
+persistent ids, growth = equivalent-radius change, drift = centre movement; new
+and split patches get no speed), and uploads `scenes/<time>.npz` (~100–300 KB:
+fog map, distance, patch-id map, patch table) + `latest.json` to the public
+Supabase Storage bucket `fog-satellite`. Daytime runs only record `status: day`.
 
 `fog_satellite.py` re-checks `latest.json` at most every 2 min and keeps only the
 newest scene in memory (~0.5 MB, fits the 512 MB budget). Per waypoint it reads a
 3×3 window (~15 km): ≥3 fog pixels → fog, 1–2 → patchy, >4 unknown → unknown;
-otherwise an approaching edge ≤50 km away whose ETA beats the driver (+15 min) →
-approaching. Scenes older than 75 min → stale. Env: `SUPABASE_URL` (already set)
+otherwise each patch within 50 km gets approach = growth + drift toward the
+waypoint and ETA = distance ÷ approach; soonest ETA before the driver (+15 min)
+→ approaching; else a just-born patch within 15 km → forming; else clear. Scenes older than 75 min → stale. Env: `SUPABASE_URL` (already set)
 or `FOG_SAT_BASE_URL` (tests / `file://` folder). Worker secrets live in GitHub
 Actions only (`EUMETSAT_KEY/SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
 Tests: `python -m pytest satellite_worker/test_worker.py` (offline end-to-end:
@@ -589,7 +593,7 @@ reusing any GCP numbers.
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Liveness (also the keep-alive target) |
-| `/fog/satellite` | POST | Body `{waypoints:[{lat,lon,eta_mins}]}` → `{scene, points}`: satellite night-fog status per waypoint (`fog`/`patchy`/`approaching`/`clear`/`unknown`/`daytime`/`stale`/`no_data`/`outside`) from the newest precomputed Meteosat-9 fog map (`fog_satellite.py`). Best-effort, never 500s. |
+| `/fog/satellite` | POST | Body `{waypoints:[{lat,lon,eta_mins}]}` → `{scene, points}`: satellite night-fog status per waypoint (`fog`/`patchy`/`approaching`/`forming`/`clear`/`unknown`/`daytime`/`stale`/`no_data`/`outside`), with `nearest_patch` / `soonest_patch` details from the newest precomputed Meteosat-9 fog map (`fog_satellite.py`). Best-effort, never 500s. |
 | `/fog/satellite/status` | GET | Newest satellite fog scene: time, age, fog/unknown share, state |
 | `/debug/cache` | GET | Per-radar cache freshness/ready diagnostics |
 | `/movement` | GET | Global rain movement over Delhi NCR |

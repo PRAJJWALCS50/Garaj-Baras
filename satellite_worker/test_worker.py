@@ -5,8 +5,8 @@ Offline tests for the satellite fog pipeline (no EUMETSAT, no satpy, no Supabase
 
 The end-to-end test fakes the satellite: a fog blanket centred on the Ganga at
 Garhmukteshwar grows over three 30-min scenes. The REAL worker code turns those
-scenes into fog maps / distance / edge speed in a local folder, and the REAL
-backend module (backend/fog_satellite.py) answers a Moradabad -> Delhi route.
+scenes into fog maps / distance / tracked fog patches in a local folder, and the
+REAL backend module (backend/fog_satellite.py) answers a Moradabad -> Delhi route.
 """
 import importlib
 import os
@@ -50,23 +50,127 @@ def test_classify_rules():
     assert (F.classify(t039, t108, np.full(t108.shape, 10.0)) == C.UNKNOWN).all()
 
 
-def test_distance_and_speed():
+def test_distance():
     fog = np.zeros((50, 50), np.uint8)
     fog[25, 10] = C.FOG
     d = F.distance_km(fog)
     ns, ew = F.pixel_km()
     assert d[25, 10] == 0 and abs(d[25, 20] - 10 * ew) < 0.01
     assert (F.distance_km(np.zeros((5, 5), np.uint8)) == C.DIST_MAX_KM).all()
-    # edge approaches 8 km per 30 min in both intervals -> 16 km/h
-    s = F.edge_speed(np.full((2, 2), 20.0), np.full((2, 2), 28.0), 30, np.full((2, 2), 36.0), 30)
-    assert np.allclose(s, 16.0)
-    # disagreeing intervals (one noisy frame) -> no speed
-    s = F.edge_speed(np.full((2, 2), 20.0), np.full((2, 2), 28.0), 30, np.full((2, 2), 60.0), 30)
-    assert np.isnan(s).all()
-    # receding fog / no history / too-old history -> no speed
-    assert np.isnan(F.edge_speed(np.full((2, 2), 30.0), np.full((2, 2), 20.0), 30)).all()
-    assert np.isnan(F.edge_speed(np.full((2, 2), 30.0))).all()
-    assert np.isnan(F.edge_speed(np.full((2, 2), 20.0), np.full((2, 2), 28.0), 120)).all()
+
+
+# ── fog patches ─────────────────────────────────────────────────────────────
+def disk(lat, lon, radius_km):
+    yy = (LATS[:, None] - lat) * 111.32
+    xx = (LONS[None, :] - lon) * 111.32 * np.cos(np.radians(lat))
+    return np.hypot(yy, xx) <= radius_km
+
+
+def fogmap(*masks):
+    out = np.zeros((len(LATS), len(LONS)), np.uint8)
+    for m in masks:
+        out[m] = C.FOG
+    return out
+
+
+def step(fm, prev=None, gap=30, next_id=1):
+    labels, props = F.label_patches(fm, LATS, LONS)
+    ids_prev, tab_prev = prev if prev else (None, None)
+    return F.track_patches(labels, props, ids_prev, tab_prev, gap if prev else None, next_id)
+
+
+def by_status(table, name):
+    return np.flatnonzero(table["status"] == F.STATUS[name])
+
+
+def test_label_patches_ignores_specks():
+    fm = fogmap(disk(28, 78, 15), disk(26, 82, 15))
+    fm[100, 300] = C.FOG                                   # 1-pixel speck
+    labels, props = F.label_patches(fm, LATS, LONS)
+    assert labels.max() == 2 and len(props["pixels"]) == 2
+    assert all(600 < a < 800 for a in props["area_km2"])   # pi*15^2 ~ 707 km2
+
+
+def test_tracked_patch_growth_and_drift():
+    ids1, t1, nid = step(fogmap(disk(28.8, 78.1, 10)))
+    assert by_status(t1, "untracked").size == 1            # first scene: nothing to compare with
+    ids2, t2, nid = step(fogmap(disk(28.8, 78.1, 14)), (ids1, t1), 30, nid)
+    j = by_status(t2, "tracked")
+    assert j.size == 1 and t2["id"][j[0]] == t1["id"][0]   # same id carried over
+    assert 6 <= t2["growth_kmh"][j[0]] <= 10                # radius +4 km in 30 min ~ 8 km/h
+    assert abs(t2["drift_e_kmh"][j[0]]) < 2
+    # moves 6 km east in 30 min, same size -> drift ~12 km/h east
+    ids3, t3, nid = step(fogmap(disk(28.8, 78.1 + 6 / (111.32 * np.cos(np.radians(28.8))), 14)), (ids2, t2), 30, nid)
+    j = by_status(t3, "tracked")[0]
+    assert 3 <= t3["drift_e_kmh"][j] <= 12                  # smoothed with the previous (0) drift
+
+
+def test_born_merged_split_untracked():
+    ids1, t1, nid = step(fogmap(disk(28.0, 78.0, 10), disk(28.0, 78.35, 10), disk(26.0, 82.0, 12)))
+    # the two near patches join; the far one splits into two; a new patch appears
+    split_a = disk(25.95, 81.93, 7)
+    split_b = disk(26.05, 82.07, 7)
+    ids2, t2, nid = step(fogmap(disk(28.0, 78.17, 22), split_a, split_b, disk(30.0, 75.0, 8)), (ids1, t1), 30, nid)
+    assert by_status(t2, "merged").size == 1
+    assert by_status(t2, "split").size == 2
+    born = by_status(t2, "born")
+    assert born.size == 1 and np.isnan(t2["growth_kmh"][born[0]])   # new fog has no speed
+    assert np.isnan(t2["growth_kmh"][by_status(t2, "split")]).all()  # ambiguous -> no speed
+    assert len(set(t2["id"].tolist())) == len(t2["id"])             # ids unique
+    # previous scene too old -> untracked, not "born" (no false "forming" after outages)
+    _, t3, _ = step(fogmap(disk(30.0, 75.0, 8)), (ids2, t2), 120, nid)
+    assert by_status(t3, "untracked").size == 1 and by_status(t3, "born").size == 0
+
+
+def _scene_for_backend(ids, table, fm):
+    import fog_satellite as B
+    return {"fog": fm, "dist_km": F.distance_km(fm), "patch_id": ids,
+            "patches": {c: table[c] for c in B.PATCH_COLS},
+            "patch_row": {int(p): i for i, p in enumerate(table["id"])}}
+
+
+def test_new_patch_is_forming_not_a_fake_speed():
+    """User's case: 12:00 nearest fog 20 km away; 12:30 a NEW patch appears 5 km away.
+    Must NOT be read as fog moving 30 km/h; must say 'fog forming nearby'."""
+    sys.path.insert(0, str(HERE.parent / "backend"))
+    import fog_satellite as B
+    wp = (28.84, 78.77)                                       # Moradabad
+    km_lon = 111.32 * np.cos(np.radians(wp[0]))
+    patch_a = lambda r: disk(wp[0], wp[1] - (20 + r) / km_lon, r)     # edge 20 km west
+    ids1, t1, nid = step(fogmap(patch_a(10)))
+    # NEW patch, edge ~7 km north (just outside the 3x3 window, so the point itself is not foggy)
+    new_b = disk(wp[0] + (7 + 6) / 111.32, wp[1], 6)
+    fm2 = fogmap(patch_a(10), new_b)
+    ids2, t2, nid = step(fm2, (ids1, t1), 30, nid)
+    assert by_status(t2, "born").size == 1
+    scene = _scene_for_backend(ids2, t2, fm2)
+    grid = {**C.GRID}
+    r = B.classify_point(scene, grid, {"fog": 1, "unknown": 2}, wp[0], wp[1], eta_mins=20)
+    assert r["status"] == "forming", r
+    assert r["nearest_patch"]["status"] == "born" and r["nearest_patch"]["approach_kmh"] is None
+    assert r["fog_eta_mins"] is None                          # no fake 30 km/h arrival
+    # without the new patch: patch A is not growing -> just clear
+    fm1 = fogmap(patch_a(10))
+    ids1b, t1b, _ = step(fm1, (ids1, t1), 30, nid)
+    r = B.classify_point(_scene_for_backend(ids1b, t1b, fm1), grid, {"fog": 1, "unknown": 2}, wp[0], wp[1], 20)
+    assert r["status"] == "clear" and r["fog_eta_mins"] is None
+
+
+def test_growing_patch_is_approaching():
+    sys.path.insert(0, str(HERE.parent / "backend"))
+    import fog_satellite as B
+    wp = (28.84, 78.77)
+    km_lon = 111.32 * np.cos(np.radians(wp[0]))
+    centre = (wp[0], wp[1] - 40 / km_lon)                     # centre 40 km west
+    ids1, t1, nid = step(fogmap(disk(*centre, 20)))           # edge 20 km away
+    fm2 = fogmap(disk(*centre, 26))                           # +6 km radius in 30 min -> ~12 km/h
+    ids2, t2, nid = step(fm2, (ids1, t1), 30, nid)
+    scene = _scene_for_backend(ids2, t2, fm2)
+    cls = {"fog": 1, "unknown": 2}
+    late = B.classify_point(scene, C.GRID, cls, wp[0], wp[1], eta_mins=90)    # driver in 90 min
+    early = B.classify_point(scene, C.GRID, cls, wp[0], wp[1], eta_mins=10)   # driver in 10 min
+    assert late["status"] == "approaching" and 50 <= late["fog_eta_mins"] <= 110, late
+    assert early["status"] == "clear"
 
 
 # ── end-to-end: fake satellite -> worker -> local store -> backend ──────────
@@ -153,16 +257,18 @@ def test_end_to_end_route(pipeline):
     assert res["scene"]["state"] == "ok"
     got = {name: p for (name, *_), p in zip(ROUTE, res["points"])}
     for name, p in got.items():
-        print(name, p["status"], p.get("dist_km"), p.get("edge_speed_kmh"), p.get("fog_eta_mins"))
+        print(name, p["status"], p.get("dist_km"), p.get("nearest_patch"), p.get("fog_eta_mins"))
 
     assert got["Garhmukteshwar"]["status"] == "fog"          # inside the blanket
     assert got["Gajraula"]["status"] in ("approaching", "fog", "patchy")
     assert got["Hapur"]["status"] in ("fog", "patchy", "approaching")
     assert got["Ghaziabad"]["status"] == "unknown"           # high cloud -> never "clear"
     assert got["Delhi"]["status"] == "clear"                 # far from fog
-    # fog edge grew 8 km / 30 min in both intervals -> ~16 km/h where measurable
-    speeds = [p["edge_speed_kmh"] for p in res["points"] if p.get("edge_speed_kmh")]
-    assert speeds and all(10 <= s <= 22 for s in speeds)
+    # the blanket is ONE tracked patch growing 8 km per 30 min -> ~16 km/h
+    moradabad = got["Moradabad"]
+    assert moradabad["nearest_patch"]["status"] == "tracked"
+    assert 10 <= moradabad["nearest_patch"]["approach_kmh"] <= 22
+    assert moradabad["status"] == "clear"        # driver leaves before the fog arrives
 
 
 def test_backend_states(pipeline, monkeypatch):

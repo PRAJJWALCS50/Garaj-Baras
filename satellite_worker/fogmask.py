@@ -3,7 +3,9 @@ Pure-NumPy fog products (no satellite libraries needed -> unit-testable).
 
     classify()     T3.9, T10.8, sun elevation  -> fog map  (0 clear, 1 fog, 2 unknown)
     distance_km()  fog map                     -> km to the nearest fog pixel
-    edge_speed()   distance now / 30 / 60 min  -> km/h the fog edge is approaching
+    label_patches() fog map                    -> separate fog patches (touching pixels)
+    track_patches() patches now vs previous    -> persistent id, born/tracked/merged/split,
+                                                  growth (km/h) and drift (km/h) per patch
 """
 import math
 from datetime import datetime
@@ -70,29 +72,143 @@ def distance_km(fogmap, grid=C.GRID):
     return np.minimum(d, C.DIST_MAX_KM).astype(np.float32)
 
 
-def edge_speed(d_now, d_prev1=None, gap1_min=None, d_prev2=None, gap2_min=None):
-    """
-    Approach speed of the fog edge (km/h, positive = getting closer).
+# ── Fog patches ─────────────────────────────────────────────────────────────
+STATUS = {"born": 0, "tracked": 1, "merged": 2, "split": 3, "untracked": 4}
+_EIGHT = np.ones((3, 3), dtype=bool)          # 8-neighbour connectivity
+_KM_PER_DEG = 111.32
 
-    d_prev1 is the frame ~30 min before d_now, d_prev2 ~30 min before d_prev1.
-    With both, the two estimates must agree, otherwise the pixel gets NaN
-    (one noisy frame must not create a fake 20 km jump). With only d_prev1 the
-    single estimate is used. NaN where there is no usable history, where the
-    pixel is already foggy, or where fog is far away / receding.
+
+def label_patches(fogmap, lats, lons, grid=C.GRID):
     """
-    nan = np.full(d_now.shape, np.nan, dtype=np.float32)
-    if d_prev1 is None or not gap1_min or gap1_min > C.SPEED_MAX_GAP_MIN:
-        return nan
-    s1 = (d_prev1 - d_now) / (gap1_min / 60.0)
-    if d_prev2 is not None and gap2_min and gap2_min <= C.SPEED_MAX_GAP_MIN:
-        s2 = (d_prev2 - d_prev1) / (gap2_min / 60.0)
-        agree = (np.sign(s1) == np.sign(s2)) & (
-            np.abs(s1 - s2) <= np.maximum(C.SPEED_AGREE_KMH, 0.5 * np.abs(s1)))
-        speed = np.where(agree, (s1 + s2) / 2, np.nan)
-    else:
-        speed = s1
-    valid = (d_now > 0) & (d_now < C.DIST_MAX_KM) & (speed > 0) & (speed <= C.SPEED_MAX_KMH)
-    return np.where(valid, speed, np.nan).astype(np.float32)
+    Touching fog pixels -> patches. Returns (labels, props):
+      labels : int32 map, 1..n for tracked-size patches, 0 elsewhere
+      props  : dict of arrays (index k = label k+1): pixels, area_km2, lat, lon
+    Specks smaller than PATCH_MIN_PIXELS get label 0 (they still count as fog
+    in the fog map, they are just not tracked).
+    """
+    raw, n = ndimage.label(fogmap == C.FOG, structure=_EIGHT)
+    empty = {k: np.zeros(0) for k in ("pixels", "area_km2", "lat", "lon")}
+    if n == 0:
+        return np.zeros(fogmap.shape, np.int32), empty
+    idx = np.arange(1, n + 1)
+    pixels = ndimage.sum_labels(np.ones_like(raw), raw, idx)
+    keep = idx[pixels >= C.PATCH_MIN_PIXELS]
+    remap = np.zeros(n + 1, np.int32)
+    remap[keep] = np.arange(1, len(keep) + 1)
+    labels = remap[raw]
+    if not len(keep):
+        return labels, empty
+    k = np.arange(1, len(keep) + 1)
+    row_area = (grid["res"] * _KM_PER_DEG) ** 2 * np.cos(np.radians(lats))       # km2 per pixel, per row
+    area_map = np.broadcast_to(row_area[:, None], fogmap.shape)
+    lat_map = np.broadcast_to(np.asarray(lats)[:, None], fogmap.shape)
+    lon_map = np.broadcast_to(np.asarray(lons)[None, :], fogmap.shape)
+    props = {
+        "pixels": ndimage.sum_labels(np.ones_like(labels), labels, k),
+        "area_km2": ndimage.sum_labels(area_map, labels, k),
+        "lat": ndimage.mean(lat_map, labels, k),
+        "lon": ndimage.mean(lon_map, labels, k),
+    }
+    return labels, props
+
+
+def _motion(area_new, lat_new, lon_new, area_old, lat_old, lon_old, gap_h):
+    """Growth (km/h of equivalent-radius change) and drift (km/h east, north)."""
+    growth = (math.sqrt(area_new / math.pi) - math.sqrt(area_old / math.pi)) / gap_h
+    de = (lon_new - lon_old) * _KM_PER_DEG * math.cos(math.radians((lat_new + lat_old) / 2)) / gap_h
+    dn = (lat_new - lat_old) * _KM_PER_DEG / gap_h
+    if abs(growth) > C.PATCH_GROWTH_MAX_KMH:
+        growth = math.nan
+    if math.hypot(de, dn) > C.PATCH_DRIFT_MAX_KMH:
+        de = dn = math.nan
+    return growth, de, dn
+
+
+def _smooth(new, old):
+    if math.isfinite(new) and math.isfinite(old):
+        return C.PATCH_SMOOTH * new + (1 - C.PATCH_SMOOTH) * old
+    return new
+
+
+def track_patches(labels, props, prev_ids=None, prev_table=None, gap_min=None, next_id=1):
+    """
+    Give each patch a persistent id and a motion by matching it with the
+    previous scene's patches through pixel OVERLAP.
+
+    prev_ids   : previous scene's patch-id map (persistent ids, 0 = none) or None
+    prev_table : previous scene's patch table (dict of arrays) or None
+    Returns (ids_map, table, next_id). Table columns: id, pixels, area_km2,
+    lat, lon, status, age, growth_kmh, drift_e_kmh, drift_n_kmh.
+    A NEW patch (born) never gets a speed: forming fog is not moving fog.
+    """
+    n = len(props["pixels"])
+    table = {
+        "id": np.zeros(n, np.int32), "pixels": np.asarray(props["pixels"], np.int32),
+        "area_km2": np.asarray(props["area_km2"], np.float32),
+        "lat": np.asarray(props["lat"], np.float32), "lon": np.asarray(props["lon"], np.float32),
+        "status": np.full(n, STATUS["untracked"], np.int8), "age": np.zeros(n, np.int16),
+        "growth_kmh": np.full(n, np.nan, np.float32),
+        "drift_e_kmh": np.full(n, np.nan, np.float32), "drift_n_kmh": np.full(n, np.nan, np.float32),
+    }
+    usable = (prev_ids is not None and prev_table is not None and gap_min
+              and 0 < gap_min <= C.PATCH_MAX_GAP_MIN)
+    parents = {j: [] for j in range(n)}
+    children = {}
+    if usable:
+        prow = {int(pid): i for i, pid in enumerate(prev_table["id"])}
+        both = (labels > 0) & (prev_ids > 0)
+        pairs, counts = np.unique(np.stack([labels[both], prev_ids[both]]), axis=1, return_counts=True)
+        for (lab, pid), cnt in zip(pairs.T, counts):
+            j, i = int(lab) - 1, prow.get(int(pid))
+            if i is None:
+                continue
+            small = min(table["pixels"][j], int(prev_table["pixels"][i]))
+            if cnt / max(small, 1) >= C.PATCH_OVERLAP_MIN:
+                parents[j].append(i)
+                children.setdefault(i, []).append(j)
+
+    gap_h = (gap_min or 0) / 60.0
+    used = set()
+    # biggest patches first, so a split parent's id goes to its largest child
+    for j in np.argsort(-table["pixels"]):
+        par = parents[j]
+        if not usable:
+            status, pid = "untracked", None
+        elif not par:
+            status, pid = "born", None
+        elif len(par) > 1:
+            status = "merged"
+            pid = int(prev_table["id"][max(par, key=lambda i: prev_table["pixels"][i])])
+        elif len(children[par[0]]) > 1:
+            status, pid = "split", int(prev_table["id"][par[0]])
+        else:
+            status, pid = "tracked", int(prev_table["id"][par[0]])
+        if pid is None or pid in used:
+            pid, next_id = next_id, next_id + 1
+        used.add(pid)
+        table["id"][j], table["status"][j] = pid, STATUS[status]
+        if par:
+            table["age"][j] = int(max(prev_table["age"][i] for i in par)) + 1
+        ambiguous = status == "split" or any(len(children[i]) > 1 for i in par)
+        if par and not ambiguous:
+            a_old = float(sum(prev_table["area_km2"][i] for i in par))
+            w = [float(prev_table["area_km2"][i]) / a_old for i in par]
+            lat_old = sum(wi * float(prev_table["lat"][i]) for wi, i in zip(w, par))
+            lon_old = sum(wi * float(prev_table["lon"][i]) for wi, i in zip(w, par))
+            g, de, dn = _motion(float(table["area_km2"][j]), float(table["lat"][j]), float(table["lon"][j]),
+                                a_old, lat_old, lon_old, gap_h)
+            if status == "tracked":
+                i = par[0]
+                g = _smooth(g, float(prev_table["growth_kmh"][i]))
+                de = _smooth(de, float(prev_table["drift_e_kmh"][i]))
+                dn = _smooth(dn, float(prev_table["drift_n_kmh"][i]))
+            table["growth_kmh"][j], table["drift_e_kmh"][j], table["drift_n_kmh"][j] = g, de, dn
+
+    ids_map = np.zeros(labels.shape, np.int32)
+    if n:
+        lut = np.concatenate([[0], table["id"]]).astype(np.int32)
+        ids_map = lut[labels]
+    return ids_map, table, next_id
 
 
 def scene_stats(fogmap):

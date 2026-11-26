@@ -9,11 +9,11 @@ Meteosat-9 (EUMETSAT, every 15 min)
    ▼
 download newest scan (.nat, whole Earth) → keep 3.9 + 10.8 µm over 72–89°E, 23–33°N (0.05° grid)
    ▼
-fogmask.py  per pixel: fog / clear / unknown  →  km to nearest fog  →  fog-edge speed (vs 30 & 60 min ago)
+fogmask.py  per pixel: fog / clear / unknown  →  km to nearest fog  →  fog PATCHES tracked vs the previous scene
    ▼
 Supabase Storage bucket "fog-satellite" (public read)
    latest.json                 newest 3 scenes (time, file, fog share)
-   scenes/YYYYMMDD_HHMM.npz    fog, dist_km, speed_kmh, btd, t108   (~100-300 KB)
+   scenes/YYYYMMDD_HHMM.npz    fog, dist_km, patch_id map, patch table (p_*), btd, t108   (~100-300 KB)
    ▼
 backend/fog_satellite.py  →  POST /fog/satellite  →  frontend "Satellite" fog source
 ```
@@ -29,20 +29,40 @@ backend/fog_satellite.py  →  POST /fog/satellite  →  frontend "Satellite" fo
 
 Thresholds are first guesses in `config.py`; tune them against airport METAR.
 
+## Fog patches (why not just "distance to nearest fog")
+
+Fog mostly forms in place and spreads; it rarely travels like rain. If only the
+distance to the nearest fog pixel were tracked, a NEW patch appearing 5 km away
+(after the nearest fog was 20 km away) would look like fog moving 30 km/h. So:
+
+1. Touching fog pixels (8 neighbours) form a **patch** (`scipy.ndimage.label`);
+   specks under 3 pixels are not tracked (they still count as fog).
+2. Each patch is matched with the previous scene by **pixel overlap**
+   (overlap ≥ 30% of the smaller patch):
+   no overlap → **born**, one parent → **tracked** (keeps its id), several
+   parents → **merged**, a parent with several children → **split**,
+   previous scene missing / older than 75 min → **untracked**.
+3. Motion per patch: **growth** = change of equivalent radius √(area/π) in km/h,
+   **drift** = centre movement (km/h east/north). Tracked patches are smoothed
+   with their previous values. Born and split patches get **no speed**.
+
 ## Per waypoint (backend)
 
 3×3 pixel window (~15 km): ≥3 fog pixels → **fog**, 1–2 → **patchy**,
->4 unknown → **unknown**. Otherwise, if the nearest fog is ≤50 km away and its
-edge is approaching (two 30-min speed estimates agree), fog ETA = distance ÷
-speed; if fog arrives before the driver (+15 min) → **approaching**, else clear.
-Arrivals more than 3 h ahead are flagged `outlook` (satellite extrapolation is
-not trusted that far).
+>4 unknown → **unknown**. Otherwise every patch within 50 km is checked:
+approach speed = growth + drift toward the waypoint; ETA = distance ÷ speed.
+If the soonest patch arrives before the driver (+15 min) → **approaching**;
+else if a **born** patch is within 15 km → **forming** (new fog nearby, no
+ETA); else **clear**. Arrivals more than 3 h ahead are flagged `outlook`.
 
 ## Known limits
 
 - Night only. Daytime needs a visible-channel method (not built yet).
-- Cannot see under high cloud ("unknown", never "clear"). Fog hidden under
-  cloud also makes distances/speeds near cloud edges unreliable.
+- Cannot see under high cloud ("unknown", never "clear"). Cloud covering part
+  of a patch can look like a split or shrink, so motion near cloud edges is
+  unreliable.
+- Patch distances are to pixel centres (±3 km). Fog merges/splits often; merged
+  patches are compared with all their parents combined.
 - Sees cloud tops: low stratus over cities (Delhi) can look like ground fog.
 - ~5 km pixels: very small patches (a canal, a river crossing) can be missed.
 - Bare desert (west Rajasthan) can give a positive BTD on clear nights; the

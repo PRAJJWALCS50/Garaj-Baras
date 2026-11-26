@@ -5,7 +5,8 @@ Every ~30 min (GitHub Actions, see .github/workflows/fog_satellite.yml):
   1. daytime over the whole region?  -> record "day" and stop (method is night-only)
   2. find the newest Meteosat-9 scan; already processed? -> stop
   3. download it, keep only 3.9 / 10.8 um over North India
-  4. fog map + distance-to-fog + fog-edge speed (vs the 2 previous scenes)
+  4. fog map + distance-to-fog + fog patches tracked against the previous
+     scene (born / tracked / merged / split, growth and drift per patch)
   5. upload scenes/<time>.npz and update latest.json  (Supabase Storage)
 
 Local test on your PC (no Supabase needed):
@@ -55,9 +56,19 @@ def manifest_base(now):
     }
 
 
-def load_dist(store, entry):
+PATCH_COLS = ("id", "pixels", "area_km2", "lat", "lon", "status", "age",
+              "growth_kmh", "drift_e_kmh", "drift_n_kmh")
+
+
+def load_patches(store, entry):
+    """Previous scene's patch-id map and patch table, or (None, None)."""
     raw = store.get(entry["path"])
-    return None if raw is None else S.unpack(raw)["dist_km"].astype(np.float32)
+    if raw is None:
+        return None, None
+    z = S.unpack(raw)
+    if "patch_id" not in z:
+        return None, None
+    return z["patch_id"].astype(np.int32), {c: z[f"p_{c}"] for c in PATCH_COLS}
 
 
 def process(args):
@@ -70,7 +81,8 @@ def process(args):
     # 1. whole region in daylight? nothing to see with the night method
     if not args.time and F.sun_elevation(target, lats[::20], lons[::20]).min() > C.SUN_ELEV_NIGHT_DEG:
         if manifest.get("status") != "day":
-            S.write_manifest(store, {**manifest_base(now), "status": "day", "scenes": []})
+            S.write_manifest(store, {**manifest_base(now), "status": "day", "scenes": [],
+                                     "next_patch_id": manifest.get("next_patch_id", 1)})
         log("daytime over the whole region - night fog method not applicable, skipped")
         return 0
 
@@ -97,29 +109,34 @@ def process(args):
     # 4. products
     fog = F.classify(t039, t108, F.sun_elevation(t, lats, lons))
     dist = F.distance_km(fog)
+    labels, props = F.label_patches(fog, lats, lons)
     prev = sorted((s for s in old if parse_iso(s["time"]) < t), key=lambda s: s["time"], reverse=True)
-    d1 = load_dist(store, prev[0]) if len(prev) > 0 else None
-    d2 = load_dist(store, prev[1]) if len(prev) > 1 else None
-    gap1 = (t - parse_iso(prev[0]["time"])).total_seconds() / 60 if d1 is not None else None
-    gap2 = ((parse_iso(prev[0]["time"]) - parse_iso(prev[1]["time"])).total_seconds() / 60
-            if d1 is not None and d2 is not None else None)
-    speed = F.edge_speed(dist, d1, gap1, d2, gap2)
+    prev_ids, prev_table, gap = None, None, None
+    if prev:
+        prev_ids, prev_table = load_patches(store, prev[0])
+        gap = (t - parse_iso(prev[0]["time"])).total_seconds() / 60
+    ids, table, next_id = F.track_patches(labels, props, prev_ids, prev_table, gap,
+                                          int(manifest.get("next_patch_id", 1)))
     stats = F.scene_stats(fog)
-    log(f"scene {iso(t)}: {stats}, speed pixels={int(np.isfinite(speed).sum())}")
+    counts = {k: int((table["status"] == v).sum()) for k, v in F.STATUS.items()}
+    stats["patches"] = int(len(table["id"]))
+    log(f"scene {iso(t)}: {stats}, patch status {counts}")
 
     # 5. upload
     path = f"{C.SCENE_DIR}/{t:%Y%m%d_%H%M}.npz"
     store.put(path, S.pack({
         "fog": fog,
         "dist_km": dist.astype(np.float16),
-        "speed_kmh": speed.astype(np.float16),
+        "patch_id": ids,
+        **{f"p_{c}": table[c] for c in PATCH_COLS},
         "btd": (t108 - t039).astype(np.float16),
         "t108": t108.astype(np.float16),
     }))
     entry = {"time": iso(t), "path": path, "raw_mb": round(size_mb, 1), **stats}
     scenes = sorted([entry] + [s for s in old if s["time"] != entry["time"]],
                     key=lambda s: s["time"], reverse=True)[:3]
-    S.write_manifest(store, {**manifest_base(now), "status": "ok", "scenes": scenes})
+    S.write_manifest(store, {**manifest_base(now), "status": "ok", "scenes": scenes,
+                             "next_patch_id": next_id})
     log(f"uploaded {path} and {C.MANIFEST}")
 
     if args.quicklook:
