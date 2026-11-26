@@ -287,6 +287,45 @@ async function fetchOrsRoute(from, to) {
   return { lonLat, steps }
 }
 
+/** OSRM maneuver (type + modifier) → ORS step type code used by maneuvers.jsx. */
+function osrmToOrsType(type, modifier) {
+  if (type === 'depart') return 11
+  if (type === 'arrive') return 10
+  if (type === 'roundabout' || type === 'rotary') return 7
+  if (type === 'exit roundabout' || type === 'exit rotary') return 8
+  const m = modifier || 'straight'
+  if (type === 'fork' || type === 'merge' || type === 'on ramp' || type === 'off ramp') {
+    if (m.includes('left')) return 12
+    if (m.includes('right')) return 13
+  }
+  return { left: 0, right: 1, 'sharp left': 2, 'sharp right': 3, 'slight left': 4,
+    'slight right': 5, straight: 6, uturn: 9 }[m] ?? 6
+}
+
+/**
+ * Backup road route from the public OSRM server (keyless, CORS-enabled), used
+ * when ORS fails (quota, key, timeout). Same shape as fetchOrsRoute. Throws on failure.
+ */
+async function fetchOsrmRoute(from, to) {
+  const res = await axios.get(
+    `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}`,
+    { timeout: 30000, params: { overview: 'full', geometries: 'geojson', steps: true } }
+  )
+  const route = res.data?.code === 'Ok' ? res.data.routes?.[0] : null
+  const lonLat = route?.geometry?.coordinates || null
+  const steps = []
+  let wp = 0
+  for (const s of route?.legs?.[0]?.steps || []) {
+    steps.push({
+      type: osrmToOrsType(s.maneuver?.type, s.maneuver?.modifier),
+      name: s.name || '-', exit: s.maneuver?.exit ?? null, distance: Number(s.distance) || 0,
+      wp: Math.min(wp, (lonLat?.length || 1) - 1),
+    })
+    wp += Math.max((s.geometry?.coordinates?.length || 1) - 1, 0)
+  }
+  return { lonLat, steps }
+}
+
 function toCityRouteName(a, b) {
   const left = toShortCityName(a) || tr('Source', 'शुरुआत')
   const right = toShortCityName(b) || tr('Destination', 'मंज़िल')
@@ -2268,8 +2307,17 @@ export default function App() {
         const ors = await fetchOrsRoute(start, end)
         routeLonLat = ors.lonLat
         steps = ors.steps
-      } catch {
-        routeLonLat = [[start.lon, start.lat], [end.lon, end.lat]]
+      } catch (orsErr) {
+        console.warn('ORS route failed, trying OSRM:', orsErr?.response?.status || orsErr?.message)
+        try {
+          const osrm = await fetchOsrmRoute(start, end)
+          routeLonLat = osrm.lonLat
+          steps = osrm.steps
+        } catch (osrmErr) {
+          console.warn('OSRM route failed too:', osrmErr?.message)
+          throw new Error(t('Could not get a road route right now. Please try again in a minute.',
+            'अभी सड़क का रास्ता नहीं मिल पाया। कृपया एक मिनट बाद फिर कोशिश करें।'))
+        }
       }
 
       if (!Array.isArray(routeLonLat) || routeLonLat.length < 2) {
