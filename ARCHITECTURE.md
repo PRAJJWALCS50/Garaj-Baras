@@ -529,24 +529,24 @@ Warning, 2 orange Alert, 3 yellow Watch, 4 green none). The official
 ### Satellite fog (fog_satellite.py + satellite_worker/)
 
 IMD radar can't see fog, so fog comes from Meteosat-9 (EUMETSAT, Indian Ocean
-coverage) night images. **All heavy work happens outside Render:** the
-`fog_satellite.yml` GitHub Action runs `satellite_worker/run.py` every 30 min at
-night; it downloads the newest scan, keeps the 3.9/10.8 µm channels on a 0.05°
-grid over 72–89°E, 23–33°N, classifies each pixel (fog = T10.8−T3.9 above a per-scene threshold = valley of
-the BTD histogram, clamped 3.75–5.0 K, then speckle removal; warm top; unknown = cold high cloud or sun above −3°), computes distance-to-fog,
+coverage) images, day and night. **All heavy work happens outside Render:** the
+`fog_satellite.yml` GitHub Action runs `satellite_worker/run.py` every 30 min
+around the clock; it downloads the newest scan, keeps the 0.6/1.6/3.9/10.8 µm channels on a 0.05°
+grid over 72–89°E, 23–33°N, classifies each pixel by its own sun angle — night (sun ≤ −3°): fog = T10.8−T3.9 above a per-scene threshold = valley of
+the BTD histogram, clamped 3.75–5.0 K, then speckle removal; warm top; day (sun ≥ 8°): fog = sun-corrected VIS0.6 reflectance above a per-scene valley (clamp 0.25–0.42) AND T10.8 ≥ 268 K AND smooth 3×3 texture AND not snow (NDSI from 1.6 µm), bright cold/lumpy cloud → unknown; dawn/dusk (−3°…8°) → unknown; T10.8 < 255 K → unknown), computes distance-to-fog,
 splits fog into **patches** (touching pixels) and tracks them against the
 previous scene by pixel overlap (born / tracked / merged / split / untracked,
 persistent ids, growth = equivalent-radius change, drift = centre movement; new
-and split patches get no speed), and uploads `scenes/<time>.npz` (~100–300 KB:
+and split patches get no speed; tracking restarts when the day-pixel share jumps >0.2 at dawn/dusk), and uploads `scenes/<time>.npz` (~100–300 KB:
 fog map, distance, patch-id map, patch table) + `latest.json` to the public
-Supabase Storage bucket `fog-satellite`. Daytime runs only record `status: day`.
+Supabase Storage bucket `fog-satellite`. Daytime scenes also store the sun-corrected visible reflectance (`vis06`).
 
 `fog_satellite.py` re-checks `latest.json` at most every 2 min and keeps only the
 newest scene in memory (~0.5 MB, fits the 512 MB budget). Per waypoint it reads a
 3×3 window (~15 km): ≥3 fog pixels → fog, 1–2 → patchy, >4 unknown → unknown;
 otherwise each patch within 50 km gets approach = growth + drift toward the
 waypoint and ETA = distance ÷ approach; soonest ETA before the driver (+15 min)
-→ approaching; else a just-born patch within 15 km → forming; else clear. Scenes older than 75 min → stale, except while the sun is up over the plain (−3° at 27.5°N 80°E) → daytime; the frontend shows daytime as "No fog" (product choice; the night method cannot see morning fog). Env: `SUPABASE_URL` (already set)
+→ approaching; else a just-born patch within 15 km → forming; else clear. Scenes older than 75 min → stale, except while the sun is up over the plain (−3° at 27.5°N 80°E) → daytime; the frontend shows daytime as "No fog". Since the daytime method, fresh day scenes are normal `ok` scenes, so the daytime state only appears if the worker falls behind by day. Env: `SUPABASE_URL` (already set)
 or `FOG_SAT_BASE_URL` (tests / `file://` folder). Worker secrets live in GitHub
 Actions only (`EUMETSAT_USERNAME/PASSWORD` - EUMETSAT's OAuth2 login since Nov 2026; the old API key can search but not download - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
 Tests: `python -m pytest satellite_worker/test_worker.py` (offline end-to-end:
@@ -593,7 +593,7 @@ reusing any GCP numbers.
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Liveness (also the keep-alive target) |
-| `/fog/satellite` | POST | Body `{waypoints:[{lat,lon,eta_mins}]}` → `{scene, points}`: satellite night-fog status per waypoint (`fog`/`patchy`/`approaching`/`forming`/`clear`/`unknown`/`daytime`/`stale`/`no_data`/`outside`), with `nearest_patch` / `soonest_patch` details from the newest precomputed Meteosat-9 fog map (`fog_satellite.py`). Best-effort, never 500s. |
+| `/fog/satellite` | POST | Body `{waypoints:[{lat,lon,eta_mins}]}` → `{scene, points}`: satellite fog status per waypoint (night and day) (`fog`/`patchy`/`approaching`/`forming`/`clear`/`unknown`/`daytime`/`stale`/`no_data`/`outside`), with `nearest_patch` / `soonest_patch` details from the newest precomputed Meteosat-9 fog map (`fog_satellite.py`). Best-effort, never 500s. |
 | `/fog/satellite/status` | GET | Newest satellite fog scene: time, age, fog/unknown share, state |
 | `/debug/cache` | GET | Per-radar cache freshness/ready diagnostics |
 | `/movement` | GET | Global rain movement over Delhi NCR |
@@ -753,7 +753,7 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   subscribes to push via `/alerts/subscribe` with the auth header) and
   `SavedPlaces.jsx` (CRUD on `/locations`; tapping a place loads it into the
   nowcast picker).
-- **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. **Satellite** (default) is live: after each prediction `App.jsx` calls `fetchSatelliteFog` (non-blocking) → `routeFog` points + `fogScene`; fog/patchy/approaching waypoints become dashed fog zones, and the chooser/route chip/nav chip show the satellite state (night only, delayed, cloud-hidden points) instead of a misleading "No fog". ECMWF and General Model still show "Coming soon" and draw nothing. Satellite points carry no visibility (`visM` NaN), so chips omit the visibility value. India Radar is removed from the frontend; backend mosaic endpoints remain available.
+- **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. **Satellite** (default) is live: after each prediction `App.jsx` calls `fetchSatelliteFog` (non-blocking) → `routeFog` points + `fogScene`; fog/patchy/approaching waypoints become dashed fog zones, and the chooser/route chip/nav chip show the satellite state (delayed, cloud-hidden points, dawn/dusk unknown) instead of a misleading "No fog". ECMWF and General Model still show "Coming soon" and draw nothing. Satellite points carry no visibility (`visM` NaN), so chips omit the visibility value. India Radar is removed from the frontend; backend mosaic endpoints remain available.
 - **Chatbot location lookup (`chatbot.py`):** Nominatim searches are serialized with at least 1.1 seconds between requests. A bounded 256-entry cache keeps successful locations for 24 hours; repeated concurrent searches share the cached result. HTTP 403/429/503 responses start a provider cooldown (Retry-After respected, bounded to 60–3600 seconds). Photon is an India-filtered fallback for rejected, failed, or empty lookups. Errors never become cached locations or invented coordinates. Both providers failing returns a retryable location error. Gemini failures try the remaining keys before Groq; only actual HTTP 429 exhaustion is reported as quota exhaustion, and Groq-only setup does not require the Gemini SDK.
 - **Chat tab (`ChatPage`):** streams `/chat` SSE, shows tool-call status.
   Gated behind sign-in (`SignInGate`).

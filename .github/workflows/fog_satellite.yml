@@ -1,8 +1,8 @@
 name: Satellite fog worker
 
-# One Meteosat-9 scene -> fog map -> Supabase Storage, every 30 min at night.
-# Night over North India ~ 12:00-02:30 UTC (17:30-08:00 IST); daytime runs are
-# skipped by the script itself. GitHub cron is best-effort (runs can be late);
+# One Meteosat-9 scene -> fog map -> Supabase Storage, every 30 min, day and night
+# (night: 3.9/10.8 um test, day: visible test, dawn/dusk: unknown).
+# GitHub cron is best-effort (runs can be late);
 # the worker uses the real scan times, and the backend flags stale scenes.
 #
 # Repo secrets needed (Settings -> Secrets and variables -> Actions):
@@ -13,8 +13,7 @@ name: Satellite fog worker
 
 on:
   schedule:
-    - cron: "7,37 12-23 * * *"
-    - cron: "7,37 0-2 * * *"
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       time:

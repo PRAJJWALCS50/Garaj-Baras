@@ -106,11 +106,14 @@ def area_definition(grid=C.GRID):
 
 
 def to_grid(nat_path: Path):
-    """Calibrated brightness temperatures (K) of 3.9 and 10.8 um on our grid."""
+    """
+    Our grid as a dict of float32 arrays:
+      t039, t108 : brightness temperature (K)
+      vis06, nir16 : reflectance (satpy percent; fogmask converts) - daytime method
+    """
     from satpy import Scene
     scn = Scene(filenames=[str(nat_path)], reader=C.SATPY_READER)
-    scn.load([C.CH_039, C.CH_108])
+    names = {"t039": C.CH_039, "t108": C.CH_108, "vis06": C.CH_VIS06, "nir16": C.CH_NIR16}
+    scn.load(list(names.values()))
     res = scn.resample(area_definition(), resampler="nearest", radius_of_influence=C.RESAMPLE_RADIUS_M)
-    t039 = np.asarray(res[C.CH_039].values, dtype=np.float32)
-    t108 = np.asarray(res[C.CH_108].values, dtype=np.float32)
-    return t039, t108
+    return {k: np.asarray(res[ch].values, dtype=np.float32) for k, ch in names.items()}
