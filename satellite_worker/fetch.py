@@ -5,7 +5,10 @@ channels we need on our North India grid.
     newest_product(time)  -> the scan nearest/just before `time`
     download_native()     -> the scene's .nat file (whole Earth disk, large)
     to_grid()             -> (t039, t108) float32 arrays on config.GRID
-Needs EUMETSAT_KEY / EUMETSAT_SECRET (environment variables).
+Login (EUMETSAT's current method, EUMDAC guide v6.1, Nov 2026): your EUMETSAT
+User Portal username + password -> OAuth2 token. Environment variables:
+    EUMETSAT_USERNAME / EUMETSAT_PASSWORD   (preferred; also EUMDAC_USER / EUMDAC_PW)
+    EUMETSAT_KEY / EUMETSAT_SECRET          (legacy API key: search works, downloads may 403)
 """
 import os
 import shutil
@@ -18,13 +21,34 @@ import numpy as np
 import config as C
 
 
+def credentials_present():
+    env = os.environ.get
+    return bool((env("EUMETSAT_USERNAME") or env("EUMDAC_USER")) and (env("EUMETSAT_PASSWORD") or env("EUMDAC_PW"))) \
+        or bool(env("EUMETSAT_KEY") and env("EUMETSAT_SECRET"))
+
+
+def make_token():
+    """OAuth2 token from username/password (current method), else legacy API key."""
+    import eumdac
+    env = os.environ.get
+    user = env("EUMETSAT_USERNAME") or env("EUMDAC_USER")
+    pw = env("EUMETSAT_PASSWORD") or env("EUMDAC_PW")
+    oauth = getattr(getattr(eumdac, "token", None), "OAuth2Token", None)
+    if user and pw and oauth is not None:
+        tok = oauth()
+        res = tok.set_credentials(eumdac.token.Creds(user=user, pw=pw))
+        return res if res is not None else tok
+    key, secret = env("EUMETSAT_KEY"), env("EUMETSAT_SECRET")
+    if key and secret:
+        return eumdac.AccessToken((key, secret))
+    if user and pw:
+        raise RuntimeError("installed eumdac has no OAuth2Token - run: pip install -U eumdac")
+    raise RuntimeError("no EUMETSAT credentials (EUMETSAT_USERNAME/PASSWORD or EUMETSAT_KEY/SECRET)")
+
+
 def collection():
     import eumdac
-    key, secret = os.environ.get("EUMETSAT_KEY"), os.environ.get("EUMETSAT_SECRET")
-    if not key or not secret:
-        raise RuntimeError("EUMETSAT_KEY / EUMETSAT_SECRET not set")
-    token = eumdac.AccessToken((key, secret))
-    return eumdac.DataStore(token).get_collection(C.EUMETSAT_COLLECTION)
+    return eumdac.DataStore(make_token()).get_collection(C.EUMETSAT_COLLECTION)
 
 
 def _start(p):

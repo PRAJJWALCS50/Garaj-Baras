@@ -548,7 +548,7 @@ otherwise each patch within 50 km gets approach = growth + drift toward the
 waypoint and ETA = distance ÷ approach; soonest ETA before the driver (+15 min)
 → approaching; else a just-born patch within 15 km → forming; else clear. Scenes older than 75 min → stale. Env: `SUPABASE_URL` (already set)
 or `FOG_SAT_BASE_URL` (tests / `file://` folder). Worker secrets live in GitHub
-Actions only (`EUMETSAT_KEY/SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
+Actions only (`EUMETSAT_USERNAME/PASSWORD` - EUMETSAT's OAuth2 login since Nov 2026; the old API key can search but not download - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
 Tests: `python -m pytest satellite_worker/test_worker.py` (offline end-to-end:
 fake scenes → real worker → local store → real backend module).
 

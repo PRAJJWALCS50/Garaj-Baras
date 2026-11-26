@@ -180,7 +180,9 @@ def main():
     ap.add_argument("--force", action="store_true", help="reprocess even if already done")
     args = ap.parse_args()
 
-    missing = [k for k in ("EUMETSAT_KEY", "EUMETSAT_SECRET") if not os.environ.get(k)]
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from fetch import credentials_present
+    missing = [] if credentials_present() else ["EUMETSAT_USERNAME/EUMETSAT_PASSWORD"]
     if not args.local:
         missing += [k for k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY") if not os.environ.get(k)]
     if missing:

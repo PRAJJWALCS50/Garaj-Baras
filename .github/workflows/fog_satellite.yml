@@ -6,7 +6,9 @@ name: Satellite fog worker
 # the worker uses the real scan times, and the backend flags stale scenes.
 #
 # Repo secrets needed (Settings -> Secrets and variables -> Actions):
-#   EUMETSAT_KEY, EUMETSAT_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#   EUMETSAT_USERNAME, EUMETSAT_PASSWORD   (EUMETSAT login; current OAuth2 method)
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#   (legacy EUMETSAT_KEY / EUMETSAT_SECRET still read, but downloads may be refused)
 # Until they exist, runs exit successfully with "not configured".
 
 on:
@@ -39,6 +41,8 @@ jobs:
       - run: pip install -r satellite_worker/requirements.txt
       - name: Process newest scene
         env:
+          EUMETSAT_USERNAME: ${{ secrets.EUMETSAT_USERNAME }}
+          EUMETSAT_PASSWORD: ${{ secrets.EUMETSAT_PASSWORD }}
           EUMETSAT_KEY: ${{ secrets.EUMETSAT_KEY }}
           EUMETSAT_SECRET: ${{ secrets.EUMETSAT_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

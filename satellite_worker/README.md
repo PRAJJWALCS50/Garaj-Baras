@@ -73,13 +73,13 @@ ETA); else **clear**. Arrivals more than 3 h ahead are flagged `outlook`.
 ```bash
 pip install -r satellite_worker/requirements.txt
 # local test, no Supabase: one historical scene + a picture
-EUMETSAT_KEY=... EUMETSAT_SECRET=... \
+EUMETSAT_USERNAME=... EUMETSAT_PASSWORD=... \
   python satellite_worker/run.py --local fog_test --time 2025-01-03T22:00 --quicklook fog_test/map.png
 # offline tests (no keys needed)
 python -m pytest satellite_worker/test_worker.py -q
 ```
 
-Production needs 4 GitHub repo secrets: `EUMETSAT_KEY`, `EUMETSAT_SECRET`,
+Production needs 4 GitHub repo secrets: `EUMETSAT_USERNAME`, `EUMETSAT_PASSWORD`,
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the bucket from
 `supabase_setup.sql`. Without the secrets, scheduled runs exit with
 "not configured" (green), so merging this is safe before setup.
