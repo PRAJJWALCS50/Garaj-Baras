@@ -62,7 +62,7 @@ export async function fetchSatelliteFog(apiBase, waypoints, signal) {
 export function satelliteNote(scene, points, t) {
   const state = scene?.state
   if (!state) return t('Satellite fog unavailable', 'सैटेलाइट कोहरा उपलब्ध नहीं')
-  if (state === 'daytime') return t('Satellite fog works at night only', 'सैटेलाइट कोहरा केवल रात में')
+  if (state === 'daytime') return t('No fog', 'कोहरा नहीं')   // night-only method; product choice: show "No fog" by day
   if (state === 'stale') return t('Satellite data is delayed', 'सैटेलाइट डेटा देर से है')
   if (state !== 'ok') return t('Satellite fog unavailable', 'सैटेलाइट कोहरा उपलब्ध नहीं')
   const unknown = (points || []).filter((p) => p.status === 'unknown').length
