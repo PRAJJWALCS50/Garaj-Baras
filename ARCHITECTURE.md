@@ -54,7 +54,9 @@ Garaj Baras/
 ├── Garaj Baras — Complete System Flow.txt    ← PPT-style pipeline walkthrough (partly stale)
 ├── .github/workflows/
 │   ├── keep_alive.yml           ← cron */5: curl /health (keeps Render awake)
-│   └── keepalive.yml            ← cron */10: same (duplicate, both active)
+│   ├── keepalive.yml            ← cron */10: same (duplicate, both active)
+│   └── fog_satellite.yml        ← cron every 30 min at night: satellite_worker/run.py (Meteosat-9 fog map → Supabase Storage)
+├── satellite_worker/            ← NOT deployed to Render: downloads + processes Meteosat-9 scenes (satpy, eumdac); see its README
 ├── backend/                     ← FastAPI app (run from inside this dir)
 │   ├── main.py                  ← API endpoints + per-radar state cache + LRU eviction (THE hub)
 │   ├── radar.py                 ← Delhi GIF download/frame-extraction/OCR-timestamp + shared helpers
@@ -91,7 +93,7 @@ Garaj Baras/
 │   ├── src/App.jsx              ← ~1900 lines; entire app UI: tabs, route page, nowcast page, chat page
 │   ├── src/RouteMap.jsx         ← lazy-loaded Leaflet map: colored route segments + animated journey car + rain toggle + Satellite/ECMWF/General Model fog chooser; `navMode` = full-screen heading-up nav map (leaflet-rotate)
 │   ├── src/LiveJourney.jsx      ← navigation UI: GPS tracking, ORS turn-by-turn card, speed/ETA bar, rain + fog chips, 5-min radar re-sync, journey-guardian registration
-│   ├── src/fog.js               ← visibility formatting/zone helpers; legacy fetch helper is unused while fog sources are placeholders
+│   ├── src/fog.js               ← fog zone helpers + `fetchSatelliteFog` (POST /fog/satellite) + `satelliteNote`; legacy Open-Meteo fetch helper unused
 │   ├── src/imdWarnings.js       ← POST waypoints to `/imd_warnings/route` (optional, failures silent)
 │   ├── src/ImdRouteWarnings.jsx ← "IMD warnings on your route" card on the results screen (today + tomorrow, Hindi/English)
 │   ├── src/mapTiles.js          ← base-map tiles: Mapbox (dark-v11 for route + nav, light-v11 for light maps; route maps dim/desaturate tiles via CSS so only the cased route line stands out) when MAPBOX_ACCESS_TOKEN is set (root .env, injected by vite.config.js), else CARTO/OSM fallback
@@ -524,6 +526,32 @@ Warning, 2 orange Alert, 3 yellow Watch, 4 green none). The official
   hazards for districts warned on either day. Waypoints outside the covered
   states count as `uncovered_waypoints`.
 
+### Satellite fog (fog_satellite.py + satellite_worker/)
+
+IMD radar can't see fog, so fog comes from Meteosat-9 (EUMETSAT, Indian Ocean
+coverage) night images. **All heavy work happens outside Render:** the
+`fog_satellite.yml` GitHub Action runs `satellite_worker/run.py` every 30 min at
+night; it downloads the newest scan, keeps the 3.9/10.8 µm channels on a 0.05°
+grid over 72–89°E, 23–33°N, classifies each pixel (fog = T10.8−T3.9 above a per-scene threshold = valley of
+the BTD histogram, clamped 3.75–5.0 K, then speckle removal; warm top; unknown = cold high cloud or sun above −3°), computes distance-to-fog,
+splits fog into **patches** (touching pixels) and tracks them against the
+previous scene by pixel overlap (born / tracked / merged / split / untracked,
+persistent ids, growth = equivalent-radius change, drift = centre movement; new
+and split patches get no speed), and uploads `scenes/<time>.npz` (~100–300 KB:
+fog map, distance, patch-id map, patch table) + `latest.json` to the public
+Supabase Storage bucket `fog-satellite`. Daytime runs only record `status: day`.
+
+`fog_satellite.py` re-checks `latest.json` at most every 2 min and keeps only the
+newest scene in memory (~0.5 MB, fits the 512 MB budget). Per waypoint it reads a
+3×3 window (~15 km): ≥3 fog pixels → fog, 1–2 → patchy, >4 unknown → unknown;
+otherwise each patch within 50 km gets approach = growth + drift toward the
+waypoint and ETA = distance ÷ approach; soonest ETA before the driver (+15 min)
+→ approaching; else a just-born patch within 15 km → forming; else clear. Scenes older than 75 min → stale. Env: `SUPABASE_URL` (already set)
+or `FOG_SAT_BASE_URL` (tests / `file://` folder). Worker secrets live in GitHub
+Actions only (`EUMETSAT_USERNAME/PASSWORD` - EUMETSAT's OAuth2 login since Nov 2026; the old API key can search but not download - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
+Tests: `python -m pytest satellite_worker/test_worker.py` (offline end-to-end:
+fake scenes → real worker → local store → real backend module).
+
 ## 8. Georeferencing (georef*.py)
 
 Per radar, a **quadratic** fit (`px = c0 + c1·lat + c2·lon + c3·lat·lon +
@@ -565,6 +593,8 @@ reusing any GCP numbers.
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Liveness (also the keep-alive target) |
+| `/fog/satellite` | POST | Body `{waypoints:[{lat,lon,eta_mins}]}` → `{scene, points}`: satellite night-fog status per waypoint (`fog`/`patchy`/`approaching`/`forming`/`clear`/`unknown`/`daytime`/`stale`/`no_data`/`outside`), with `nearest_patch` / `soonest_patch` details from the newest precomputed Meteosat-9 fog map (`fog_satellite.py`). Best-effort, never 500s. |
+| `/fog/satellite/status` | GET | Newest satellite fog scene: time, age, fog/unknown share, state |
 | `/debug/cache` | GET | Per-radar cache freshness/ready diagnostics |
 | `/movement` | GET | Global rain movement over Delhi NCR |
 | `/radar/gif?radar=` | GET | Latest downloaded radar GIF (delhi/lucknow/patna/bhopal/jaipur/paradip/patiala/nagpur/sohra/mahabaleshwar/mangaluru/thiruvananthapuram) |
@@ -648,15 +678,14 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   on-demand `/nowcast` for that point. Merged waypoints carry `_cumKm` (their
   real distance along the route) so segment coloring survives live-journey
   re-predictions where passed waypoints clamp to eta 0.
-- **Fog layer (`fog.js`):** IMD radar can't see fog, so after each route
-  prediction the frontend fetches Open-Meteo `hourly=visibility` for all
-  waypoints in one multi-location GET (no backend involvement — keeps the
-  512 MB server untouched), picking each waypoint's forecast hour at its ETA.
-  <1 km = fog, <500 m = thick, <200 m = dense. Contiguous foggy waypoints
-  become fog zones, drawn as a dashed haze on the route (toggleable, like the
-  rain forecast coloring), summarized in a `fog-banner` on the results page,
-  and shown as a "Fog in ~N min · visibility X" chip while navigating.
-  Refreshed every 20 min during navigation. Failures are silent (fog optional).
+- **Fog layer (`fog.js`):** IMD radar can't see fog. After each route
+  prediction the frontend POSTs the waypoints to `/fog/satellite` (Meteosat-9
+  night fog maps, see "Satellite fog" in section 7). Fog/patchy/approaching
+  waypoints become fog zones, drawn as a dashed haze on the route (toggleable),
+  summarized in the route-card fog chip, and shown as "Fog in ~N min" while
+  navigating. The older Open-Meteo visibility helper (`fetchRouteFog`) is kept
+  but unused. Failures are silent (fog optional); the chip then says
+  "Satellite fog unavailable".
 - **Results screen / route card:** map on top (46vh), then a Google-Maps
   style `route-card`: From/To, trip time + distance, arrival clock, "via
   <road>" (named ORS step with the most distance), rain/fog/radar chips, and
@@ -724,7 +753,7 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   subscribes to push via `/alerts/subscribe` with the auth header) and
   `SavedPlaces.jsx` (CRUD on `/locations`; tapping a place loads it into the
   nowcast picker).
-- **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. Each selection displays "No fog" using empty placeholder data; no visibility fetch or refresh runs until source integration is added. India Radar is removed from the frontend; backend mosaic endpoints remain available.
+- **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. **Satellite** (default) is live: after each prediction `App.jsx` calls `fetchSatelliteFog` (non-blocking) → `routeFog` points + `fogScene`; fog/patchy/approaching waypoints become dashed fog zones, and the chooser/route chip/nav chip show the satellite state (night only, delayed, cloud-hidden points) instead of a misleading "No fog". ECMWF and General Model still show "Coming soon" and draw nothing. Satellite points carry no visibility (`visM` NaN), so chips omit the visibility value. India Radar is removed from the frontend; backend mosaic endpoints remain available.
 - **Chatbot location lookup (`chatbot.py`):** Nominatim searches are serialized with at least 1.1 seconds between requests. A bounded 256-entry cache keeps successful locations for 24 hours; repeated concurrent searches share the cached result. HTTP 403/429/503 responses start a provider cooldown (Retry-After respected, bounded to 60–3600 seconds). Photon is an India-filtered fallback for rejected, failed, or empty lookups. Errors never become cached locations or invented coordinates. Both providers failing returns a retryable location error. Gemini failures try the remaining keys before Groq; only actual HTTP 429 exhaustion is reported as quota exhaustion, and Groq-only setup does not require the Gemini SDK.
 - **Chat tab (`ChatPage`):** streams `/chat` SSE, shows tool-call status.
   Gated behind sign-in (`SignInGate`).

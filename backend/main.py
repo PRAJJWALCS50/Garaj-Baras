@@ -31,6 +31,7 @@ import verification  # type: ignore
 import alerts  # type: ignore
 import journeys  # type: ignore
 import imd_warnings  # type: ignore
+import fog_satellite  # type: ignore
 import accounts  # type: ignore
 from auth import get_current_user, get_optional_user  # type: ignore
 from patches import (  # type: ignore
@@ -2933,6 +2934,26 @@ def imd_warnings_route(payload: ImdRouteRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"IMD warning lookup failed: {e}")
+
+
+@app.post("/fog/satellite")
+def fog_satellite_route(payload: PredictWaypointsRequest):
+    """Satellite (Meteosat-9) night-fog status per waypoint. Reads the small
+    precomputed fog map from Supabase Storage (satellite_worker/); never fails
+    the caller: problems come back as status "no_data"."""
+    try:
+        return fog_satellite.route_fog(
+            {"lat": wp.lat, "lon": wp.lon, "eta_mins": wp.eta_mins} for wp in payload.waypoints
+        )
+    except Exception as e:
+        traceback.print_exc()
+        return {"scene": {"state": "no_data", "error": str(e)}, "points": []}
+
+
+@app.get("/fog/satellite/status")
+def fog_satellite_status():
+    """Newest satellite fog scene: time, age, fog/unknown share, state."""
+    return fog_satellite.status()
 
 
 @app.get("/alerts/debug")

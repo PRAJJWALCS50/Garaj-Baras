@@ -1,0 +1,8 @@
+# Satellite fog worker (runs in GitHub Actions or on a PC - NOT on Render)
+numpy
+scipy
+requests
+eumdac
+satpy
+pyresample
+matplotlib

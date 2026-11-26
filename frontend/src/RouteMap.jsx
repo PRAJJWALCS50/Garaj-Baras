@@ -4,7 +4,7 @@ import 'leaflet-rotate'
 import { MapContainer, Marker, Popup, Polyline, TileLayer } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useT, tr } from './i18n'
-import { FOG_COLORS, fogZones } from './fog'
+import { FOG_COLORS, fogZones, satelliteNote } from './fog'
 import { baseTiles } from './mapTiles'
 
 // Localize a backend rain-intensity label for display.
@@ -192,6 +192,7 @@ export default function RouteMap({
   onStopDetails,
   livePos,          // {lat, lon, heading} while a live journey is running, else null
   fog,              // [{cumKm, visM, level}] from fog.js, or null
+  fogScene = null,  // satellite scene state from /fog/satellite (time, daytime/stale)
   navMode = false,  // full-screen turn-by-turn map (heading-up, follow-me)
   weatherMode = null, // controlled rain/fog mode in navigation
   onWeatherModeChange,
@@ -203,7 +204,7 @@ export default function RouteMap({
   const [rainLayerOn, setRainLayerOn] = useState(true)
   const [fogLayerOn, setFogLayerOn] = useState(true)
   const [fogOptionsOpen, setFogOptionsOpen] = useState(false)
-  const [fogSource, setFogSource] = useState(null)
+  const [fogSource, setFogSource] = useState('satellite') // only Satellite has live data so far
   const showRain = navMode ? weatherMode !== 'fog' : rainLayerOn
   const showFog = navMode ? weatherMode === 'fog' : fogLayerOn
   const [headingUp, setHeadingUp] = useState(true)
@@ -392,7 +393,7 @@ export default function RouteMap({
   }, [routeCoords])
 
   const fogLines = useMemo(() => {
-    if (!routeCumKm || !Array.isArray(fog) || !fog.length) return []
+    if (fogSource !== 'satellite' || !routeCumKm || !Array.isArray(fog) || !fog.length) return []
     return fogZones(fog)
       .map((z) => {
         // a single-point zone still deserves a visible stretch (±0.5 km)
@@ -402,7 +403,15 @@ export default function RouteMap({
         return { ...z, positions: sliceRoute(routeCoords, routeCumKm, Math.max(0, a), b) }
       })
       .filter((z) => z.positions.length >= 2)
-  }, [fog, routeCoords, routeCumKm])
+  }, [fog, fogSource, routeCoords, routeCumKm])
+
+  const fogStatusText = fogSource !== 'satellite'
+    ? t('Coming soon', 'जल्द आ रहा है')
+    : fog == null
+      ? t('Checking fog…', 'कोहरा जाँच रहे हैं…')
+      : fogLines.length
+        ? t(`Fog on ${fogLines.length} stretch(es)`, `${fogLines.length} हिस्सों पर कोहरा`)
+        : satelliteNote(fogScene, fog, t) || t('No fog seen by satellite', 'सैटेलाइट को कोहरा नहीं दिखा')
 
   const heading = Number(livePos?.heading)
   const arrowIcon = useMemo(
@@ -675,7 +684,7 @@ export default function RouteMap({
                   {fogSource === source.id && <span aria-hidden>✓</span>}
                 </button>
               ))}
-              {fogSource && <p className="fog-options__status" role="status">{t('No fog', 'कोहरा नहीं')}</p>}
+              {fogSource && <p className="fog-options__status" role="status">{fogStatusText}</p>}
             </div>
           )}
         </div>

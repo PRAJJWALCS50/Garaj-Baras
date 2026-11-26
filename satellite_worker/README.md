@@ -1,0 +1,93 @@
+# Satellite fog worker
+
+Turns Meteosat-9 night images into a small fog map of North India every
+30 minutes, so the website can show fog along any route instantly.
+
+```
+Meteosat-9 (EUMETSAT, every 15 min)
+   │  run.py, every 30 min at night (GitHub Actions: .github/workflows/fog_satellite.yml)
+   ▼
+download newest scan (.nat, whole Earth) → keep 3.9 + 10.8 µm over 72–89°E, 23–33°N (0.05° grid)
+   ▼
+fogmask.py  per pixel: fog / clear / unknown  →  km to nearest fog  →  fog PATCHES tracked vs the previous scene
+   ▼
+Supabase Storage bucket "fog-satellite" (public read)
+   latest.json                 newest 3 scenes (time, file, fog share)
+   scenes/YYYYMMDD_HHMM.npz    fog, dist_km, patch_id map, patch table (p_*), btd, t108   (~100-300 KB)
+   ▼
+backend/fog_satellite.py  →  POST /fog/satellite  →  frontend "Satellite" fog source
+```
+
+## Fog rule (night only)
+
+| Pixel test | Class |
+|---|---|
+| sun higher than −3° (day / twilight) | unknown |
+| T10.8 < 255 K (cold high cloud on top) | unknown |
+| T10.8 − T3.9 > per-scene threshold | **fog / low stratus** |
+| otherwise | clear |
+
+**Threshold = valley of each scene's BTD histogram** (clear-land hump vs fog
+hump), clamped to 3.75–5.0 K, fallback 4.25 K. Then isolated specks are removed
+and small holes filled. A fixed 2.5 K marked 56% of the region as fog on the
+first real test (west Rajasthan desert reads 3.2–4.1 K even when clear).
+
+First real test (Meteosat-9, 2025-01-03 22:00 UTC / 03:30 IST): thresholds
+4.62 / 4.38 / 4.38 K, fog share 25%, ~20 patches. Satellite fog at Delhi and
+Lucknow (both airports reported 0 m visibility), clear at Jaipur (~2 km).
+One night only - validate across many nights vs METAR before trusting.
+
+## Fog patches (why not just "distance to nearest fog")
+
+Fog mostly forms in place and spreads; it rarely travels like rain. If only the
+distance to the nearest fog pixel were tracked, a NEW patch appearing 5 km away
+(after the nearest fog was 20 km away) would look like fog moving 30 km/h. So:
+
+1. Touching fog pixels (8 neighbours) form a **patch** (`scipy.ndimage.label`);
+   specks under 3 pixels are not tracked (they still count as fog).
+2. Each patch is matched with the previous scene by **pixel overlap**
+   (overlap ≥ 30% of the smaller patch):
+   no overlap → **born**, one parent → **tracked** (keeps its id), several
+   parents → **merged**, a parent with several children → **split**,
+   previous scene missing / older than 75 min → **untracked**.
+3. Motion per patch: **growth** = change of equivalent radius √(area/π) in km/h,
+   **drift** = centre movement (km/h east/north). Tracked patches are smoothed
+   with their previous values. Born and split patches get **no speed**.
+
+## Per waypoint (backend)
+
+3×3 pixel window (~15 km): ≥3 fog pixels → **fog**, 1–2 → **patchy**,
+>4 unknown → **unknown**. Otherwise every patch within 50 km is checked:
+approach speed = growth + drift toward the waypoint; ETA = distance ÷ speed.
+If the soonest patch arrives before the driver (+15 min) → **approaching**;
+else if a **born** patch is within 15 km → **forming** (new fog nearby, no
+ETA); else **clear**. Arrivals more than 3 h ahead are flagged `outlook`.
+
+## Known limits
+
+- Night only. Daytime needs a visible-channel method (not built yet).
+- Cannot see under high cloud ("unknown", never "clear"). Cloud covering part
+  of a patch can look like a split or shrink, so motion near cloud edges is
+  unreliable.
+- Patch distances are to pixel centres (±3 km). Fog merges/splits often; merged
+  patches are compared with all their parents combined.
+- Sees cloud tops: low stratus over cities (Delhi) can look like ground fog.
+- ~5 km pixels: very small patches (a canal, a river crossing) can be missed.
+- Bare desert (west Rajasthan) can give a positive BTD on clear nights; the
+  threshold must be checked there.
+
+## Running
+
+```bash
+pip install -r satellite_worker/requirements.txt
+# local test, no Supabase: one historical scene + a picture
+EUMETSAT_USERNAME=... EUMETSAT_PASSWORD=... \
+  python satellite_worker/run.py --local fog_test --time 2025-01-03T22:00 --quicklook fog_test/map.png
+# offline tests (no keys needed)
+python -m pytest satellite_worker/test_worker.py -q
+```
+
+Production needs 4 GitHub repo secrets: `EUMETSAT_USERNAME`, `EUMETSAT_PASSWORD`,
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the bucket from
+`supabase_setup.sql`. Without the secrets, scheduled runs exit with
+"not configured" (green), so merging this is safe before setup.

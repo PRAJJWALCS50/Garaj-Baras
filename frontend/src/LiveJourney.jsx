@@ -192,6 +192,7 @@ export default function LiveJourneyPanel({
   plannedSpeedKmh,
   steps = [],         // ORS turn-by-turn: [{type, name, exit, wp (routeCoords index)}]
   fog = null,         // fog.js points along the route, or null
+  fogNote = null,     // satellite state note (night only / delayed / cloud), or null
   weatherMode = 'rain', // selected map/weather layer
   onLivePos,          // ({lat, lon, heading}) → App → RouteMap marker
   onWaypointsUpdated, // (rawResponseData) → App merges + recolors segments
@@ -597,14 +598,20 @@ export default function LiveJourneyPanel({
   let fogChip = null
   const zoneAhead = !arrived ? fogZ.find((z) => z.endKm > progressKm) : null
   if (zoneAhead) {
+    const hasVis = Number.isFinite(zoneAhead.minVis)
     const vis = fmtVisibility(zoneAhead.minVis)
+    const inMins = fmtMins(((zoneAhead.startKm - progressKm) / speedForEta()) * 60)
     fogChip = zoneAhead.startKm <= progressKm
-      ? t(`In fog · visibility ${vis} — slow down`, `कोहरे में · दृश्यता ${vis} — धीमे चलें`)
-      : t(`Fog in ${fmtMins(((zoneAhead.startKm - progressKm) / speedForEta()) * 60)} · visibility ${vis}`, `${fmtMins(((zoneAhead.startKm - progressKm) / speedForEta()) * 60)} में कोहरा · दृश्यता ${vis}`)
+      ? (hasVis
+        ? t(`In fog · visibility ${vis} — slow down`, `कोहरे में · दृश्यता ${vis} — धीमे चलें`)
+        : t('In fog — slow down', 'कोहरे में — धीमे चलें'))
+      : (hasVis
+        ? t(`Fog in ${inMins} · visibility ${vis}`, `${inMins} में कोहरा · दृश्यता ${vis}`)
+        : t(`Fog in ${inMins}`, `${inMins} में कोहरा`))
   }
   const fogStatus = fogChip || (fog == null
     ? t('Checking fog…', 'कोहरा जाँच रहे हैं…')
-    : t('No fog', 'कोहरा नहीं'))
+    : fogNote || t('No fog', 'कोहरा नहीं'))
 
   // Navigating from the entered source while the user isn't on the route yet
   const fromSource = sourceName || t('the start', 'शुरुआती बिंदु')

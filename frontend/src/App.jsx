@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
-import { fogZones, fmtVisibility } from './fog'
+import { fogZones, fmtVisibility, fetchSatelliteFog, satelliteNote } from './fog'
 import { fetchRouteImdWarnings } from './imdWarnings'
 import { ImdRouteWarnings } from './ImdRouteWarnings'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
@@ -2155,7 +2155,8 @@ export default function App() {
   const routeLonLatRef = useRef(null)    // ORS geometry ([lon,lat]) for recoloring
   const liveSpeedRef = useRef(null)      // planned avg speed (km/h)
   const [routeSteps, setRouteSteps] = useState([]) // ORS turn-by-turn maneuvers
-  const [routeFog] = useState([]) // Placeholder until fog sources are integrated
+  const [routeFog, setRouteFog] = useState(null)   // satellite fog points along the route (null = checking)
+  const [fogScene, setFogScene] = useState(null)   // satellite scene state (time, age, daytime/stale)
   const [routeImd, setRouteImd] = useState(null)   // IMD district warnings on the route
   const [showSteps, setShowSteps] = useState(false)
   const [shareNote, setShareNote] = useState(null)
@@ -2250,7 +2251,7 @@ export default function App() {
     }
     if (!ORS_KEY) { setError(t('Missing ORS API key. Set `VITE_ORS_API_KEY` in frontend/.env.', 'ORS API key नहीं है। frontend/.env में `VITE_ORS_API_KEY` सेट करें।')); return }
 
-    setError(null); setLoading(true); setResult(null)
+    setError(null); setLoading(true); setResult(null); setRouteFog(null); setFogScene(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null)
     setScanning(false); setScanStatus('')
     warmBackend()
@@ -2342,6 +2343,10 @@ export default function App() {
 
       setRouteSegments(buildColoredSegments(routeLonLat, mergedWaypoints))
       setResult({ ...predictRes.data, route_distance_km: totalKm, waypoints: mergedWaypoints })
+      // Satellite fog (optional, non-blocking): failures just show "unavailable".
+      fetchSatelliteFog(API_BASE, mergedWaypoints)
+        .then(({ scene, points }) => { setFogScene(scene); setRouteFog(points) })
+        .catch(() => { setFogScene(null); setRouteFog([]) })
       if ((predictRes.data?.radar_lag_mins ?? 0) > 75) {
         setRadarDown(true)
       }
@@ -2423,6 +2428,7 @@ export default function App() {
     const minVis = Math.min(...zones.map((z) => z.minVis))
     return { km, minVis }
   }, [routeFog])
+  const fogNote = routeFog ? satelliteNote(fogScene, routeFog, t) : null
 
   async function openSegmentPopup(seg) {
     if (!seg?.mid) return
@@ -2502,7 +2508,7 @@ export default function App() {
 
   function handleBackToPlanner() {
     endLiveJourney()
-    setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null)
+    setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null); setRouteFog(null); setFogScene(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null); setShowBreakdown(false)
     setRadarDown(false); setRouteSteps([]); setRouteImd(null)
   }
@@ -2886,6 +2892,7 @@ export default function App() {
                     onStopDetails={(stop) => setJourneyStop({ ...stop, requestId: Date.now() })}
                     livePos={null}
                     fog={routeFog}
+                    fogScene={fogScene}
                     height="46vh"
                   />
                 </Suspense>
@@ -2926,8 +2933,10 @@ export default function App() {
                     <span className={`rc-chip rc-chip--${fogSummary ? 'fog' : 'muted'}`}>
                       <span aria-hidden>🌫</span>{' '}
                       {fogSummary
-                        ? t(`Fog on ~${Math.round(fogSummary.km)} km · ${fmtVisibility(fogSummary.minVis)}`, `~${Math.round(fogSummary.km)} किमी पर कोहरा · ${fmtVisibility(fogSummary.minVis)}`)
-                        : routeFog ? t('No fog', 'कोहरा नहीं') : t('Checking fog…', 'कोहरा जाँच रहे हैं…')}
+                        ? (Number.isFinite(fogSummary.minVis)
+                          ? t(`Fog on ~${Math.round(fogSummary.km)} km · ${fmtVisibility(fogSummary.minVis)}`, `~${Math.round(fogSummary.km)} किमी पर कोहरा · ${fmtVisibility(fogSummary.minVis)}`)
+                          : t(`Fog on ~${Math.round(fogSummary.km)} km (satellite)`, `~${Math.round(fogSummary.km)} किमी पर कोहरा (सैटेलाइट)`))
+                        : routeFog ? (fogNote || t('No fog seen by satellite', 'सैटेलाइट को कोहरा नहीं दिखा')) : t('Checking fog…', 'कोहरा जाँच रहे हैं…')}
                     </span>
                     {result.radar_message && <span className="rc-chip rc-chip--muted"><span aria-hidden>📡</span> {result.radar_message}</span>}
                   </div>
@@ -3017,6 +3026,7 @@ export default function App() {
                       openSegmentPopup={openSegmentPopup}
                       livePos={livePos}
                       fog={routeFog}
+                      fogScene={fogScene}
                       weatherMode={navWeatherMode}
                       onWeatherModeChange={setNavWeatherMode}
                     />
@@ -3027,6 +3037,7 @@ export default function App() {
                       plannedSpeedKmh={liveSpeedRef.current}
                       steps={routeSteps}
                       fog={routeFog}
+                      fogNote={fogNote}
                       weatherMode={navWeatherMode}
                       onLivePos={setLivePos}
                       onWaypointsUpdated={applyLivePrediction}
