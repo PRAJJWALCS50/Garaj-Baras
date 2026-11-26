@@ -1,28 +1,38 @@
 # Satellite fog worker
 
-Turns Meteosat-9 night images into a small fog map of North India every
+Turns Meteosat-9 images (night AND day) into a small fog map of North India every
 30 minutes, so the website can show fog along any route instantly.
 
 ```
 Meteosat-9 (EUMETSAT, every 15 min)
-   │  run.py, every 30 min at night (GitHub Actions: .github/workflows/fog_satellite.yml)
+   │  run.py, every 30 min, day and night (GitHub Actions: .github/workflows/fog_satellite.yml)
    ▼
-download newest scan (.nat, whole Earth) → keep 3.9 + 10.8 µm over 72–89°E, 23–33°N (0.05° grid)
+download newest scan (.nat, whole Earth) → keep 0.6 + 1.6 + 3.9 + 10.8 µm over 72–89°E, 23–33°N (0.05° grid)
    ▼
 fogmask.py  per pixel: fog / clear / unknown  →  km to nearest fog  →  fog PATCHES tracked vs the previous scene
    ▼
 Supabase Storage bucket "fog-satellite" (public read)
    latest.json                 newest 3 scenes (time, file, fog share)
-   scenes/YYYYMMDD_HHMM.npz    fog, dist_km, patch_id map, patch table (p_*), btd, t108   (~100-300 KB)
+   scenes/YYYYMMDD_HHMM.npz    fog, dist_km, patch_id map, patch table (p_*), btd, t108, vis06 (day)   (~100-400 KB)
    ▼
 backend/fog_satellite.py  →  POST /fog/satellite  →  frontend "Satellite" fog source
 ```
 
-## Fog rule (night only)
+## Fog rule
+
+Each pixel uses the method that fits its own sun angle (dawn sweeps across the
+region west→east in ~70 min, so one scene can be half night, half day):
+
+| Sun elevation | Method |
+|---|---|
+| ≤ −3° | **night** test below (3.9 / 10.8 µm) |
+| −3° … +8° (dawn / dusk) | unknown (neither method trustworthy) |
+| ≥ +8° | **day** test below (visible 0.6 µm + 1.6 µm) |
+
+### Night
 
 | Pixel test | Class |
 |---|---|
-| sun higher than −3° (day / twilight) | unknown |
 | T10.8 < 255 K (cold high cloud on top) | unknown |
 | T10.8 − T3.9 > per-scene threshold | **fog / low stratus** |
 | otherwise | clear |
@@ -36,6 +46,26 @@ First real test (Meteosat-9, 2025-01-03 22:00 UTC / 03:30 IST): thresholds
 4.62 / 4.38 / 4.38 K, fog share 25%, ~20 patches. Satellite fog at Delhi and
 Lucknow (both airports reported 0 m visibility), clear at Jaipur (~2 km).
 One night only - validate across many nights vs METAR before trusting.
+
+### Day
+
+By day the 3.9 µm channel is swamped by reflected sunlight, so fog is found the
+way a person sees it on a satellite photo: a **bright, smooth, flat sheet with a
+warm (near-ground) top**.
+
+| Pixel test (reflectance = VIS0.6 ÷ sin(sun elevation)) | Class |
+|---|---|
+| T10.8 < 255 K | unknown |
+| bright AND T10.8 ≥ 268 K AND 3×3 spread ≤ 0.06 AND not snow | **fog / low stratus** |
+| bright but colder or lumpy (mid cloud, cumulus) | unknown (cloud on top) |
+| snow (bright at 0.6 µm, dark at 1.6 µm: NDSI > 0.4) | clear |
+| otherwise (dark ground) | clear |
+
+"Bright" = above the valley of the scene's reflectance histogram (clamped
+0.25–0.42, fallback 0.32). Dividing by sin(sun elevation) keeps a 9 am fog sheet
+as bright as a noon one. When the share of daytime pixels changes by more than
+0.2 between two scenes (dawn/dusk), patch tracking restarts instead of turning
+the method switch into fake growth.
 
 ## Fog patches (why not just "distance to nearest fog")
 
@@ -65,7 +95,10 @@ ETA); else **clear**. Arrivals more than 3 h ahead are flagged `outlook`.
 
 ## Known limits
 
-- Night only. Daytime needs a visible-channel method (not built yet).
+- Dawn and dusk (sun −3° … +8°, about 1 h each) are unknown.
+- Daytime method is tuned on synthetic scenes and one real morning; bright
+  desert/sand in west Rajasthan and haze over cities can push reflectance up.
+- By day, fog under a deck of mid/high cloud is invisible (unknown).
 - Cannot see under high cloud ("unknown", never "clear"). Cloud covering part
   of a patch can look like a split or shrink, so motion near cloud edges is
   unreliable.

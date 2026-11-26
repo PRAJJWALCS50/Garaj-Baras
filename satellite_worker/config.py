@@ -18,6 +18,8 @@ EUMETSAT_COLLECTION = "EO:EUM:DAT:MSG:HRSEVIRI-IODC"
 SATPY_READER = "seviri_l1b_native"
 CH_039 = "IR_039"   # 3.9 um  (fog droplets look colder here at night)
 CH_108 = "IR_108"   # 10.8 um (cloud-top / surface temperature)
+CH_VIS06 = "VIS006" # 0.6 um visible reflectance (daytime: fog is bright white)
+CH_NIR16 = "IR_016" # 1.6 um reflectance (daytime: water cloud bright, snow dark)
 SEARCH_BACK_MIN = 50          # look for the newest scan in the last N minutes
 RESAMPLE_RADIUS_M = 10_000
 
@@ -37,6 +39,26 @@ CLEAN_MIN_NEIGHBOURS = 3      # fog pixel with fewer fog neighbours (of 8) -> no
 FILL_MIN_NEIGHBOURS = 6       # clear pixel with this many fog neighbours -> hole, filled
 T108_HIGH_CLOUD_K = 255.0     # colder than this -> "unknown" (blind)
 SUN_ELEV_NIGHT_DEG = -3.0     # sun higher than this -> 3.9 um contaminated -> "unknown"
+
+# ── Daytime fog test (per pixel) ────────────────────────────────────────────
+# By day 3.9 um is swamped by reflected sunlight, so the visible channel is used:
+# fog / low stratus is a BRIGHT, SMOOTH, WARM-topped sheet; clear ground is dark.
+#   reflectance = VIS0.6 / sin(sun elevation)   (removes the low-sun dimming)
+#   fog = reflectance > per-scene valley threshold
+#         AND T10.8 >= T108_LOW_CLOUD_K  (top near the ground, not mid/high cloud)
+#         AND 3x3 reflectance spread <= VIS_STD_MAX (fog is flat, cumulus is lumpy)
+#         AND not snow (snow is bright at 0.6 um but dark at 1.6 um)
+# Bright but colder/lumpy cloud -> "unknown" (a cloud is on top, cannot see below).
+# Between SUN_ELEV_NIGHT_DEG and SUN_ELEV_DAY_DEG (dawn/dusk) neither method is
+# trustworthy -> "unknown".
+SUN_ELEV_DAY_DEG = 8.0
+VIS_FOG_REFL = 0.32           # fallback reflectance threshold (fraction, 0..1)
+VIS_SEARCH = (0.20, 0.50)     # look for the valley in this range
+VIS_CLAMP = (0.25, 0.42)      # never use a threshold outside this range
+T108_LOW_CLOUD_K = 268.0      # daytime: bright cloud colder than this is not fog
+VIS_STD_MAX = 0.06            # daytime: max 3x3 reflectance std-dev for a fog sheet
+SNOW_NDSI_MIN = 0.4           # (VIS - NIR1.6) / (VIS + NIR1.6) above this -> snow, not fog
+DAYNIGHT_SWITCH_MAX = 0.2     # day share changed more than this since previous scene -> no tracking
 
 # Pixel classes written to the fog map
 CLEAR, FOG, UNKNOWN = 0, 1, 2

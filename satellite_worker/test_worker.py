@@ -9,6 +9,7 @@ scenes into fog maps / distance / tracked fog patches in a local folder, and the
 REAL backend module (backend/fog_satellite.py) answers a Moradabad -> Delhi route.
 """
 import importlib
+import json
 import os
 import sys
 import types
@@ -233,7 +234,10 @@ def pipeline(tmp_path, monkeypatch):
         p.write_bytes(b"x" * 1000)
         return p
     fake.download_native = download_native
-    fake.to_grid = lambda nat: current["arrays"]
+    def to_grid(nat):
+        a = current["arrays"]
+        return a if isinstance(a, dict) else {"t039": a[0], "t108": a[1]}
+    fake.to_grid = to_grid
     monkeypatch.setitem(sys.modules, "fetch", fake)
 
     for t, radius in frames:
@@ -315,3 +319,101 @@ def test_backend_no_config(monkeypatch):
     fog_satellite = importlib.reload(fog_satellite)
     res = fog_satellite.route_fog([{"lat": 28.8, "lon": 78.1, "eta_mins": 0}])
     assert res["scene"]["state"] == "no_data" and res["points"][0]["status"] == "no_data"
+
+
+# ── Daytime method ──────────────────────────────────────────────────────────
+def day_scene(sun=35.0, seed=0):
+    """Dark land (refl ~0.12) with a bright fog sheet, a cold cloud, cumulus and snow."""
+    rng = np.random.default_rng(seed)
+    shape = (len(LATS), len(LONS))
+    sun_e = np.full(shape, sun, np.float32)
+    s = np.sin(np.radians(sun))
+    refl = rng.normal(0.12, 0.02, shape).astype(np.float32)        # clear ground
+    nir = refl * 1.5                                                # land: brighter at 1.6 um
+    t108 = np.full(shape, 290.0, np.float32)
+    fog = np.zeros(shape, bool); fog[60:120, 80:200] = True        # fog sheet
+    refl[fog] = rng.normal(0.55, 0.01, fog.sum()); nir[fog] = refl[fog] * 0.7; t108[fog] = 278.0
+    cold = np.zeros(shape, bool); cold[150:180, 20:60] = True      # mid-level cloud
+    refl[cold] = 0.6; nir[cold] = 0.4; t108[cold] = 260.0
+    cu = np.zeros(shape, bool); cu[150:190, 250:320] = True        # lumpy cumulus, warm top
+    refl[cu] = np.where(rng.random(cu.sum()) > 0.5, 0.75, 0.3); nir[cu] = refl[cu] * 0.7; t108[cu] = 280.0
+    snow = np.zeros(shape, bool); snow[0:15, 0:60] = True           # Himalayan snow
+    refl[snow] = 0.7; nir[snow] = 0.08; t108[snow] = 272.0
+    t039 = t108 + 15                                                # 3.9 um swamped by sunlight
+    vis = refl * s * 100                                            # satpy percent, before sun correction
+    nir16 = nir * s * 100
+    return dict(t039=t039, t108=t108, vis06=vis, nir16=nir16), sun_e, dict(fog=fog, cold=cold, cu=cu, snow=snow)
+
+
+def test_daytime_fog_from_visible():
+    g, sun, m = day_scene()
+    out, info = F.classify(g["t039"], g["t108"], sun, return_info=True, vis06=g["vis06"], nir16=g["nir16"])
+    inner = np.zeros_like(m["fog"]); inner[62:118, 82:198] = True
+    assert (out[inner] == C.FOG).mean() > 0.98, "fog sheet found by day"
+    assert (out[m["cold"]] == C.UNKNOWN).mean() > 0.9, "cold bright cloud hides the ground"
+    assert (out[m["cu"]] == C.FOG).mean() < 0.05, "lumpy cumulus is not fog"
+    assert (out[m["snow"]] != C.FOG).all(), "snow is not fog"
+    clear = ~(m["fog"] | m["cold"] | m["cu"] | m["snow"])
+    assert (out[clear] == C.CLEAR).mean() > 0.97
+    assert info["day_share"] == 1.0 and C.VIS_CLAMP[0] <= info["vis_threshold"] <= C.VIS_CLAMP[1]
+
+
+def test_low_sun_correction_keeps_fog_bright():
+    g, sun, m = day_scene(sun=10.0)        # early morning: raw reflectance ~ 1/6 as bright
+    out = F.classify(g["t039"], g["t108"], sun, vis06=g["vis06"], nir16=g["nir16"])
+    assert (out[65:115, 85:195] == C.FOG).mean() > 0.98
+
+
+def test_twilight_is_unknown_and_day_without_vis_is_unknown():
+    g, _, _ = day_scene()
+    twilight = np.full(g["t108"].shape, 3.0, np.float32)
+    assert (F.classify(g["t039"], g["t108"], twilight, vis06=g["vis06"]) == C.UNKNOWN).all()
+    day = np.full(g["t108"].shape, 35.0, np.float32)
+    assert (F.classify(g["t039"], g["t108"], day) == C.UNKNOWN).all()
+
+
+def test_mixed_scene_night_west_day_east():
+    """Dawn sweeps west->east: night pixels use BTD, day pixels use the visible test."""
+    g, _, m = day_scene()
+    sun = np.where(np.arange(len(LONS))[None, :] < 170, -10.0, 30.0) * np.ones((len(LATS), 1), np.float32)
+    t039 = g["t039"].copy()
+    night = sun <= C.SUN_ELEV_NIGHT_DEG
+    t039[night] = g["t108"][night] - 0.5                 # clear night land
+    t039[night & m["fog"]] = g["t108"][night & m["fog"]] - 5.0   # night fog: BTD 5 K
+    out, info = F.classify(t039, g["t108"], sun, return_info=True, vis06=g["vis06"], nir16=g["nir16"])
+    assert (out[65:115, 85:165] == C.FOG).mean() > 0.98, "night half of the sheet"
+    assert (out[65:115, 175:195] == C.FOG).mean() > 0.98, "day half of the sheet"
+    assert 0 < info["day_share"] < 1 and 0 < info["night_share"] < 1
+
+
+def test_daytime_scene_end_to_end(tmp_path, monkeypatch):
+    """A 10:30 IST scan runs through the real worker (no day skip) and the backend sees fog."""
+    import run as worker
+    g, _, _ = day_scene()
+    fake = types.ModuleType("fetch")
+    fake.collection = lambda: object()
+    fake.nearest_product = lambda coll, when: when
+    fake.newest_product = lambda coll, when: when
+    fake.scan_time = lambda p: p
+
+    def download_native(product, wd):
+        p = Path(wd) / "s.nat"
+        p.write_bytes(b"x")
+        return p
+    fake.download_native = download_native
+
+    def to_grid(nat):
+        # real sun elevation over the grid at that time, so the scene is consistent
+        sun = F.sun_elevation(datetime(2025, 1, 4, 5, 0), LATS, LONS)
+        s = np.sin(np.radians(np.clip(sun, 1, 90)))
+        return {**g, "vis06": g["vis06"] / np.sin(np.radians(35.0)) * s,
+                "nir16": g["nir16"] / np.sin(np.radians(35.0)) * s}
+    fake.to_grid = to_grid
+    monkeypatch.setitem(sys.modules, "fetch", fake)
+    args = types.SimpleNamespace(local=str(tmp_path), time="2025-01-04T05:00", quicklook=None, force=False)
+    assert worker.process(args) == 0
+    man = json.loads((tmp_path / C.MANIFEST).read_text())
+    sc = man["scenes"][0]
+    assert man["status"] == "ok" and sc["day_share"] > 0.9 and sc["fog_share"] > 0.05
+    z = np.load(tmp_path / sc["path"])
+    assert "vis06" in z.files and (z["fog"] == C.FOG).sum() > 1000

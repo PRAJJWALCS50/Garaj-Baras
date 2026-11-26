@@ -2,9 +2,10 @@
 Satellite fog worker - one run = one scene.
 
 Every ~30 min (GitHub Actions, see .github/workflows/fog_satellite.yml):
-  1. daytime over the whole region?  -> record "day" and stop (method is night-only)
-  2. find the newest Meteosat-9 scan; already processed? -> stop
-  3. download it, keep only 3.9 / 10.8 um over North India
+  1. find the newest Meteosat-9 scan; already processed? -> stop
+  2. download it, keep 0.6 / 1.6 / 3.9 / 10.8 um over North India
+  3. fog map: night pixels -> 3.9/10.8 um BTD test, day pixels -> visible test,
+     dawn/dusk -> unknown
   4. fog map + distance-to-fog + fog patches tracked against the previous
      scene (born / tracked / merged / split, growth and drift per patch)
   5. upload scenes/<time>.npz and update latest.json  (Supabase Storage)
@@ -53,7 +54,10 @@ def manifest_base(now):
         "classes": {"clear": C.CLEAR, "fog": C.FOG, "unknown": C.UNKNOWN},
         "thresholds": {"btd_fog_k_fallback": C.BTD_FOG_K, "btd_method": "per-scene histogram valley",
                        "t108_high_cloud_k": C.T108_HIGH_CLOUD_K,
-                       "sun_elev_night_deg": C.SUN_ELEV_NIGHT_DEG},
+                       "sun_elev_night_deg": C.SUN_ELEV_NIGHT_DEG,
+                       "sun_elev_day_deg": C.SUN_ELEV_DAY_DEG,
+                       "vis_fog_refl_fallback": C.VIS_FOG_REFL, "vis_method": "per-scene histogram valley",
+                       "t108_low_cloud_k": C.T108_LOW_CLOUD_K},
     }
 
 
@@ -79,14 +83,6 @@ def process(args):
     lats, lons = F.grid_axes()
     target = parse_iso(args.time) if args.time else now
 
-    # 1. whole region in daylight? nothing to see with the night method
-    if not args.time and F.sun_elevation(target, lats[::20], lons[::20]).min() > C.SUN_ELEV_NIGHT_DEG:
-        if manifest.get("status") != "day":
-            S.write_manifest(store, {**manifest_base(now), "status": "day", "scenes": [],
-                                     "next_patch_id": manifest.get("next_patch_id", 1)})
-        log("daytime over the whole region - night fog method not applicable, skipped")
-        return 0
-
     # 2. newest (or requested) scan
     import fetch
     coll = fetch.collection()
@@ -105,10 +101,12 @@ def process(args):
         nat = fetch.download_native(product, Path(tmp))
         size_mb = nat.stat().st_size / 1e6
         log(f"downloaded {nat.name} ({size_mb:.0f} MB)")
-        t039, t108 = fetch.to_grid(nat)
+        g = fetch.to_grid(nat)
+    t039, t108 = g["t039"], g["t108"]
 
     # 4. products
-    fog, thr_info = F.classify(t039, t108, F.sun_elevation(t, lats, lons), return_info=True)
+    fog, thr_info = F.classify(t039, t108, F.sun_elevation(t, lats, lons), return_info=True,
+                               vis06=g.get("vis06"), nir16=g.get("nir16"))
     dist = F.distance_km(fog)
     labels, props = F.label_patches(fog, lats, lons)
     prev = sorted((s for s in old if parse_iso(s["time"]) < t), key=lambda s: s["time"], reverse=True)
@@ -116,6 +114,11 @@ def process(args):
     if prev:
         prev_ids, prev_table = load_patches(store, prev[0])
         gap = (t - parse_iso(prev[0]["time"])).total_seconds() / 60
+        # around dawn/dusk the method changes under the patches -> do not
+        # turn that into fake growth; restart tracking instead
+        if abs(thr_info["day_share"] - prev[0].get("day_share", thr_info["day_share"])) > C.DAYNIGHT_SWITCH_MAX:
+            log("day/night method switch since previous scene - tracking restarted")
+            prev_ids, prev_table, gap = None, None, None
     ids, table, next_id = F.track_patches(labels, props, prev_ids, prev_table, gap,
                                           int(manifest.get("next_patch_id", 1)))
     stats = {**F.scene_stats(fog), **thr_info}
@@ -132,6 +135,8 @@ def process(args):
         **{f"p_{c}": table[c] for c in PATCH_COLS},
         "btd": (t108 - t039).astype(np.float16),
         "t108": t108.astype(np.float16),
+        **({"vis06": F.sun_corrected(g["vis06"], F.sun_elevation(t, lats, lons)).astype(np.float16)}
+           if g.get("vis06") is not None and thr_info["day_share"] > 0 else {}),
     }))
     entry = {"time": iso(t), "path": path, "raw_mb": round(size_mb, 1), **stats}
     scenes = sorted([entry] + [s for s in old if s["time"] != entry["time"]],
@@ -141,12 +146,14 @@ def process(args):
     log(f"uploaded {path} and {C.MANIFEST}")
 
     if args.quicklook:
-        quicklook(fog, t108 - t039, iso(t), args.quicklook)
+        vis = (F.sun_corrected(g["vis06"], F.sun_elevation(t, lats, lons))
+               if g.get("vis06") is not None and thr_info["day_share"] > 0.5 else None)
+        quicklook(fog, t108 - t039, iso(t), args.quicklook, vis=vis)
         log(f"quicklook saved to {args.quicklook}")
     return 0
 
 
-def quicklook(fog, btd, title, png):
+def quicklook(fog, btd, title, png, vis=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -154,8 +161,12 @@ def quicklook(fog, btd, title, png):
     g = C.GRID
     ext = [g["lon_min"], g["lon_max"], g["lat_min"], g["lat_max"]]
     fig, ax = plt.subplots(1, 2, figsize=(15, 5))
-    im = ax[0].imshow(btd.astype(float), extent=ext, cmap="RdBu_r", vmin=-6, vmax=6)
-    ax[0].set_title("BTD = T10.8 - T3.9 (K)  red = fog/low cloud")
+    if vis is not None:
+        im = ax[0].imshow(np.clip(vis.astype(float), 0, 1), extent=ext, cmap="gray", vmin=0, vmax=0.8)
+        ax[0].set_title("visible reflectance (sun-corrected)  white = fog/cloud")
+    else:
+        im = ax[0].imshow(btd.astype(float), extent=ext, cmap="RdBu_r", vmin=-6, vmax=6)
+        ax[0].set_title("BTD = T10.8 - T3.9 (K)  red = fog/low cloud")
     fig.colorbar(im, ax=ax[0], shrink=0.8)
     ax[1].imshow(fog, extent=ext, cmap=ListedColormap(["#e8f5e9", "#607d8b", "#ffcc80"]), vmin=0, vmax=2)
     ax[1].set_title("fog map: green clear · grey FOG · orange unknown")

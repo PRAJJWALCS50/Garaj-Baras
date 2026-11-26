@@ -2,6 +2,7 @@
 Pure-NumPy fog products (no satellite libraries needed -> unit-testable).
 
     classify()     T3.9, T10.8, sun elevation  -> fog map  (0 clear, 1 fog, 2 unknown)
+                   night: BTD test; day: visible-reflectance test (VIS0.6, NIR1.6)
     distance_km()  fog map                     -> km to the nearest fog pixel
     label_patches() fog map                    -> separate fog patches (touching pixels)
     track_patches() patches now vs previous    -> persistent id, born/tracked/merged/split,
@@ -40,27 +41,53 @@ def sun_elevation(when: datetime, lats, lons):
     return 90 - np.degrees(np.arccos(np.clip(cos_zen, -1, 1)))
 
 
-def fog_threshold(btd, usable):
-    """
-    Scene-specific BTD threshold: the valley between the clear-land hump and the
-    fog hump of the histogram (dynamic threshold). Falls back to BTD_FOG_K.
-    Returns (threshold, how) with how in {"valley", "fallback"}.
-    """
-    vals = btd[usable & np.isfinite(btd)]
+def _valley(vals, edges, search, clamp, fallback):
+    """Valley between the clear hump and the fog hump of a histogram, or fallback."""
+    vals = vals[np.isfinite(vals)]
     if vals.size < 1000:
-        return C.BTD_FOG_K, "fallback"
-    edges = np.arange(0.0, 8.0 + 1e-9, 0.25)
+        return fallback, "fallback"
     hist, _ = np.histogram(vals, bins=edges)
     smooth = np.convolve(hist, np.ones(3) / 3, mode="same")
-    centres = edges[:-1] + 0.125
-    lo, hi = C.BTD_SEARCH_K
-    inside = (centres >= lo) & (centres <= hi)
+    centres = (edges[:-1] + edges[1:]) / 2
+    inside = (centres >= search[0]) & (centres <= search[1])
     k = np.flatnonzero(inside)[np.argmin(smooth[inside])]
     left, right = smooth[centres < centres[k]].max(initial=0), smooth[centres > centres[k]].max(initial=0)
-    # a real valley needs a clear-land hump on the left AND a fog hump on the right
+    # a real valley needs a clear hump on the left AND a fog hump on the right
     if smooth[k] < 0.8 * min(left, right):
-        return float(np.clip(centres[k], *C.BTD_CLAMP_K)), "valley"
-    return C.BTD_FOG_K, "fallback"
+        return float(np.clip(centres[k], *clamp)), "valley"
+    return fallback, "fallback"
+
+
+def fog_threshold(btd, usable):
+    """
+    Night: scene-specific BTD threshold (dynamic threshold). Falls back to BTD_FOG_K.
+    Returns (threshold, how) with how in {"valley", "fallback"}.
+    """
+    return _valley(btd[usable], np.arange(0.0, 8.0 + 1e-9, 0.25),
+                   C.BTD_SEARCH_K, C.BTD_CLAMP_K, C.BTD_FOG_K)
+
+
+def vis_threshold(refl, usable):
+    """Day: scene-specific reflectance threshold. Falls back to VIS_FOG_REFL."""
+    return _valley(refl[usable], np.arange(0.0, 1.0 + 1e-9, 0.025),
+                   C.VIS_SEARCH, C.VIS_CLAMP, C.VIS_FOG_REFL)
+
+
+def local_std(a):
+    """3x3 standard deviation (NaN-safe: NaN -> large)."""
+    a = np.nan_to_num(np.asarray(a, dtype=np.float32), nan=10.0)
+    m = ndimage.uniform_filter(a, 3, mode="nearest")
+    m2 = ndimage.uniform_filter(a * a, 3, mode="nearest")
+    return np.sqrt(np.maximum(m2 - m * m, 0))
+
+
+def sun_corrected(vis06, sun_elev):
+    """Visible reflectance (satpy % or fraction) -> fraction, divided by sin(elevation)."""
+    v = np.asarray(vis06, dtype=np.float32)
+    if np.nanmax(v, initial=0) > 2.0:            # satpy gives percent
+        v = v / 100.0
+    s = np.sin(np.radians(np.clip(np.asarray(sun_elev, dtype=np.float32), 1.0, 90.0)))
+    return v / s
 
 
 def clean_mask(fog):
@@ -72,25 +99,54 @@ def clean_mask(fog):
     return out
 
 
-def classify(t039, t108, sun_elev, return_info=False):
-    """Per-pixel fog map. Unknown wins over everything we cannot trust."""
+def classify(t039, t108, sun_elev, return_info=False, vis06=None, nir16=None):
+    """
+    Per-pixel fog map. Unknown wins over everything we cannot trust.
+      night (sun <= SUN_ELEV_NIGHT_DEG): BTD = T10.8 - T3.9 above the scene valley
+      day   (sun >= SUN_ELEV_DAY_DEG):   bright, smooth, warm-topped, not snow
+      dawn/dusk in between, or day without the visible channel: unknown
+    """
     t039 = np.asarray(t039, dtype=np.float32)
     t108 = np.asarray(t108, dtype=np.float32)
+    sun = np.broadcast_to(np.asarray(sun_elev, dtype=np.float32), t108.shape)
     btd = t108 - t039
-    night = np.asarray(sun_elev) <= C.SUN_ELEV_NIGHT_DEG
+    night = sun <= C.SUN_ELEV_NIGHT_DEG
+    day = sun >= C.SUN_ELEV_DAY_DEG
     warm = t108 >= C.T108_HIGH_CLOUD_K
-    thr, how = fog_threshold(btd, night & warm)
-    fog = clean_mask(np.nan_to_num(btd, nan=-99.0) > thr)
     out = np.full(t108.shape, C.CLEAR, dtype=np.uint8)
-    out[fog] = C.FOG
-    blind = (
-        ~np.isfinite(btd)
-        | (t108 < C.T108_HIGH_CLOUD_K)            # high cloud on top
-        | (np.asarray(sun_elev) > C.SUN_ELEV_NIGHT_DEG)   # daylight/twilight
-    )
+    info = {"day_share": round(float(day.mean()), 3), "night_share": round(float(night.mean()), 3)}
+
+    # night method
+    thr, how = fog_threshold(btd, night & warm)
+    fog_n = clean_mask(np.nan_to_num(btd, nan=-99.0) > thr) & night
+    info.update(btd_threshold_k=round(thr, 2), threshold_method=how)
+    blind = ~night | ~np.isfinite(btd)
+
+    # day method
+    fog_d = np.zeros(t108.shape, bool)
+    if vis06 is not None and day.any():
+        refl = sun_corrected(vis06, sun)
+        vthr, vhow = vis_threshold(refl, day & warm)
+        bright = np.nan_to_num(refl, nan=0.0) > vthr
+        snow = np.zeros(t108.shape, bool)
+        if nir16 is not None:
+            nir = sun_corrected(nir16, sun)
+            ndsi = (refl - nir) / np.maximum(refl + nir, 1e-3)
+            snow = np.nan_to_num(ndsi, nan=0.0) > C.SNOW_NDSI_MIN
+        low = t108 >= C.T108_LOW_CLOUD_K
+        smooth = local_std(refl) <= C.VIS_STD_MAX
+        fog_d = clean_mask(bright & low & smooth & ~snow) & day
+        # bright cloud that is not a fog sheet (cold or lumpy) hides the ground
+        cloud_top = bright & ~snow & ~fog_d
+        day_blind = day & (cloud_top | ~np.isfinite(refl))
+        blind = (blind & ~day) | day_blind
+        info.update(vis_threshold=round(vthr, 3), vis_method=vhow)
+
+    out[fog_n | fog_d] = C.FOG
+    blind = blind | ~np.isfinite(t108) | (t108 < C.T108_HIGH_CLOUD_K)
     out[blind] = C.UNKNOWN
     if return_info:
-        return out, {"btd_threshold_k": round(thr, 2), "threshold_method": how}
+        return out, info
     return out
 
 
