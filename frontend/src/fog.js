@@ -19,9 +19,9 @@ export function fogLevel(visM) {
 }
 
 export const FOG_COLORS = {
-  dense: '#E5E7EB',
-  thick: '#CBD5E1',
-  fog: '#94A3B8',
+  dense: '#F1F5F9',
+  thick: '#E2E8F0',   // fog (satellite sees it / AIFS: fog)
+  fog: '#A5B4FC',     // possible / patchy / approaching (soft lavender haze)
 }
 
 // ── Satellite fog (Meteosat-9 night fog maps via the backend) ─────────────────
@@ -199,12 +199,14 @@ export function fogZones(fog) {
     const startKm = i > 0 ? (pts[i - 1].cumKm + p.cumKm) / 2 : p.cumKm
     const endKm = i < pts.length - 1 ? (p.cumKm + pts[i + 1].cumKm) / 2 : p.cumKm
     const last = zones[zones.length - 1]
+    const eta = Number.isFinite(p.etaMins) ? p.etaMins : null
     if (last && Math.abs(last.endKm - startKm) < 1e-6) {
       last.endKm = endKm
+      if (eta != null) last.etaTo = eta
       if (p.visM < last.minVis) { last.minVis = p.visM; last.level = p.level }
       else if ((LEVEL_RANK[p.level] || 0) > (LEVEL_RANK[last.level] || 0)) last.level = p.level
     } else {
-      zones.push({ startKm, endKm, minVis: p.visM, level: p.level })
+      zones.push({ startKm, endKm, minVis: p.visM, level: p.level, etaFrom: eta, etaTo: eta })
     }
   }
   return zones

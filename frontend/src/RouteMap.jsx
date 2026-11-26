@@ -206,7 +206,7 @@ export default function RouteMap({
   const [rainLayerOn, setRainLayerOn] = useState(true)
   const [fogLayerOn, setFogLayerOn] = useState(true)
   const [fogOptionsOpen, setFogOptionsOpen] = useState(false)
-  const [fogSource, setFogSource] = useState('satellite') // satellite (now) | ecmwf (AIFS forecast) | general-model (soon)
+  const [fogSource, setFogSource] = useState('all') // all (both) | satellite (now) | ecmwf (AIFS forecast) | general-model (soon)
   const showRain = navMode ? weatherMode !== 'fog' : rainLayerOn
   const showFog = navMode ? weatherMode === 'fog' : fogLayerOn
   const [headingUp, setHeadingUp] = useState(true)
@@ -394,21 +394,34 @@ export default function RouteMap({
     return cum
   }, [routeCoords])
 
-  const activeFog = fogSource === 'satellite' ? fog : fogSource === 'ecmwf' ? fogAifs : null
   const fogLines = useMemo(() => {
-    if (!routeCumKm || !Array.isArray(activeFog) || !activeFog.length) return []
-    return fogZones(activeFog)
+    if (!routeCumKm) return []
+    const lines = (pts, kind) => (Array.isArray(pts) ? fogZones(pts) : [])
       .map((z) => {
         // a single-point zone still deserves a visible stretch (±0.5 km)
         const short = z.endKm - z.startKm < 0.2
         const a = short ? z.startKm - 0.5 : z.startKm
         const b = short ? z.endKm + 0.5 : z.endKm
-        return { ...z, positions: sliceRoute(routeCoords, routeCumKm, Math.max(0, a), b) }
+        return { ...z, kind, positions: sliceRoute(routeCoords, routeCumKm, Math.max(0, a), b) }
       })
       .filter((z) => z.positions.length >= 2)
-  }, [activeFog, routeCoords, routeCumKm])
+    if (fogSource === 'satellite') return lines(fog, 'sat')
+    if (fogSource === 'ecmwf') return lines(fogAifs, 'aifs')
+    if (fogSource === 'all') return [...lines(fogAifs, 'aifs'), ...lines(fog, 'sat')]   // satellite drawn on top
+    return []
+  }, [fog, fogAifs, fogSource, routeCoords, routeCumKm])
 
-  const fogStatusText = fogSource === 'ecmwf'
+  const satCount = fogLines.filter((z) => z.kind === 'sat').length
+  const aifsCount = fogLines.filter((z) => z.kind === 'aifs').length
+  const fogStatusText = fogSource === 'all'
+    ? (fog == null || fogAifs == null
+      ? t('Checking fog…', 'कोहरा जाँच रहे हैं…')
+      : satCount || aifsCount
+        ? [satCount && t(`Satellite: fog now on ${satCount} stretch(es)`, `सैटेलाइट: अभी ${satCount} हिस्सों पर कोहरा`),
+           aifsCount && t(`ECMWF: fog risk on ${aifsCount} stretch(es) when you pass`, `ECMWF: गुज़रते समय ${aifsCount} हिस्सों पर खतरा`)]
+            .filter(Boolean).join(' · ')
+        : t('No fog now or when you pass', 'न अभी कोहरा, न गुज़रते समय'))
+    : fogSource === 'ecmwf'
     ? (fogAifs == null ? t('Checking fog…', 'कोहरा जाँच रहे हैं…') : aifsNote(aifsRun, fogAifs, t, fogLines.length))
     : fogSource !== 'satellite'
     ? t('Coming soon', 'जल्द आ रहा है')
@@ -513,8 +526,8 @@ export default function RouteMap({
             positions={z.positions}
             color={FOG_COLORS[z.level] || '#CBD5E1'}
             weight={navMode ? 18 : 14}
-            opacity={0.45}
-            dashArray="2 10"
+            opacity={z.kind === 'aifs' ? 0.6 : 0.5}
+            dashArray={z.kind === 'aifs' ? '1 14' : '2 10'}
             lineCap="round"
             interactive={false}
           />
@@ -671,8 +684,9 @@ export default function RouteMap({
               }}>
               <span className="fog-options__title">{t('Fog', 'कोहरा')}</span>
               {[
-                { id: 'satellite', label: t('Satellite', 'सैटेलाइट') },
-                { id: 'ecmwf', label: 'ECMWF' },
+                { id: 'all', label: t('All sources', 'सभी स्रोत') },
+                { id: 'satellite', label: t('Satellite · now', 'सैटेलाइट · अभी') },
+                { id: 'ecmwf', label: t('ECMWF · forecast', 'ECMWF · पूर्वानुमान') },
                 { id: 'general-model', label: t('General Model', 'सामान्य मॉडल') },
               ].map((source) => (
                 <button type="button" key={source.id}

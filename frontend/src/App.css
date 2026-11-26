@@ -3233,7 +3233,7 @@
 
 /* ── Fog ─────────────────────────────────────────────────────────────── */
 .legend__swatch--fog {
-  background: repeating-linear-gradient(90deg, #CBD5E1 0 3px, transparent 3px 7px);
+  background: repeating-linear-gradient(90deg, #E2E8F0 0 3px, transparent 3px 7px);
   opacity: 0.8;
 }
 .fog-banner {
@@ -3871,3 +3871,90 @@ button.nav-chip { cursor: pointer; }
 .fog-options__button:hover, .fog-options__button.is-selected { background: rgba(37, 99, 235, 0.22); border-color: #60A5FA; }
 .fog-options__button:focus-visible, .fog-control > button:focus-visible { outline: 2px solid #93C5FD; outline-offset: 3px; }
 .fog-options__status { margin: 10px 0 0; color: #CBD5E1; font-size: 12px; }
+
+/* ── Fog on your route card ──────────────────────────────────────────── */
+.status-pill--fog {
+  background: rgba(196, 181, 253, 0.12);
+  border: 1px solid rgba(196, 181, 253, 0.36);
+  color: #DDD6FE;
+}
+.fogcard {
+  position: relative;
+  margin: 14px 16px 0;
+  padding: 16px 18px 14px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(196, 181, 253, 0.22);
+  background:
+    radial-gradient(120% 80% at 100% 0%, rgba(226, 232, 240, 0.10), transparent 60%),
+    linear-gradient(160deg, rgba(71, 85, 105, 0.28), rgba(30, 27, 75, 0.30));
+  box-shadow: inset 4px 0 0 rgba(196, 181, 253, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #E2E8F0;
+}
+/* slow drifting haze so the card reads as "fog" at a glance */
+.fogcard::before {
+  content: '';
+  position: absolute;
+  inset: -40% -60%;
+  background:
+    radial-gradient(40% 30% at 30% 40%, rgba(226, 232, 240, 0.07), transparent 70%),
+    radial-gradient(35% 25% at 70% 60%, rgba(196, 181, 253, 0.06), transparent 70%);
+  animation: fogcard-drift 18s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes fogcard-drift { from { transform: translateX(-6%); } to { transform: translateX(6%); } }
+@media (prefers-reduced-motion: reduce) { .fogcard::before { animation: none; } }
+.fogcard > * { position: relative; }
+.fogcard--clear {
+  border-color: rgba(148, 163, 184, 0.20);
+  box-shadow: inset 4px 0 0 rgba(148, 163, 184, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.fogcard--watch { box-shadow: inset 4px 0 0 rgba(242, 135, 5, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+.fogcard__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fogcard__eyebrow {
+  font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #C4B5FD;
+}
+.fogcard__badge {
+  padding: 4px 10px; border-radius: 999px; font-size: 10px; font-weight: 900; letter-spacing: 0.8px;
+  text-transform: uppercase; border: 1px solid rgba(203, 213, 225, 0.3); color: #CBD5E1;
+}
+.fogcard__badge--fog { background: rgba(226, 232, 240, 0.16); border-color: rgba(226, 232, 240, 0.5); color: #F8FAFC; }
+.fogcard__badge--watch { background: rgba(242, 135, 5, 0.14); border-color: rgba(242, 135, 5, 0.45); color: #FDBA74; }
+.fogcard__head {
+  margin-top: 10px;
+  font-family: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 20px; font-weight: 800; line-height: 1.22; color: rgba(255, 255, 255, 0.96);
+}
+.fogcard__sub { margin-top: 6px; font-size: 13px; line-height: 1.4; color: rgba(220, 228, 245, 0.76); }
+.fogcard__strip { margin-top: 14px; display: flex; flex-direction: column; gap: 7px; }
+.fogcard__lane { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 10px; }
+.fogcard__lane-label { font-size: 11px; font-weight: 700; color: #94A3B8; text-align: right; }
+.fogcard__track {
+  position: relative; height: 12px; border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+.fogcard__track--aifs { background: repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.14) 0 6px, rgba(148, 163, 184, 0.06) 6px 9px); }
+.fogcard__seg {
+  position: absolute; top: 0; bottom: 0; border-radius: 999px;
+  box-shadow: 0 0 10px rgba(226, 232, 240, 0.45);
+}
+.fogcard__ends {
+  display: flex; justify-content: space-between; margin-left: 102px;
+  font-size: 10px; font-weight: 700; color: #64748B;
+}
+.fogcard__rows { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fogcard__rows li {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px;
+  padding-top: 8px; border-top: 1px solid rgba(203, 213, 225, 0.12); font-size: 13px;
+}
+.fogcard__src { color: #94A3B8; font-weight: 600; }
+.fogcard__val { color: #E2E8F0; font-weight: 600; text-align: right; }
+.fogcard__val em { font-style: normal; font-weight: 500; color: #94A3B8; }
+.fogcard__legend { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: #94A3B8; }
+.fogcard__legend i {
+  display: inline-block; width: 18px; height: 6px; border-radius: 999px; margin-right: 5px; vertical-align: middle;
+}
+.legend__group { width: 100%; font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #64748B; margin-top: 4px; }
+.legend__swatch--fogpossible { background: repeating-linear-gradient(90deg, #A5B4FC 0 3px, transparent 3px 7px); opacity: 0.9; }

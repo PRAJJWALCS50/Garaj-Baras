@@ -1,9 +1,10 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
-import { fogZones, fmtVisibility, fetchAifsFog, fetchSatelliteFog, satelliteNote } from './fog'
+import { fetchAifsFog, fetchSatelliteFog, satelliteNote } from './fog'
 import { fetchRouteImdWarnings } from './imdWarnings'
 import { ImdRouteWarnings } from './ImdRouteWarnings'
+import { FogRouteCard, fogSummary as buildFogSummary } from './FogRouteCard'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
 import './App.css'
 import './LocationPicker.css'
@@ -2475,14 +2476,12 @@ export default function App() {
     return () => { document.body.style.overflow = prev }
   }, [liveActive])
 
-  const fogSummary = useMemo(() => {
-    const zones = fogZones(routeFog)
-    if (!zones.length) return null
-    const km = zones.reduce((a, z) => a + Math.max(0.5, z.endKm - z.startKm), 0)
-    const minVis = Math.min(...zones.map((z) => z.minVis))
-    return { km, minVis }
-  }, [routeFog])
   const fogNote = routeFog ? satelliteNote(fogScene, routeFog, t) : null
+  // every fog signal (satellite now, ECMWF at arrival, IMD districts) in one summary
+  const fogInfo = useMemo(
+    () => buildFogSummary({ satPoints: routeFog, satScene: fogScene, aifsPoints: aifsFog, aifsRun, imd: routeImd }),
+    [routeFog, fogScene, aifsFog, aifsRun, routeImd],
+  )
 
   async function openSegmentPopup(seg) {
     if (!seg?.mid) return
@@ -2920,8 +2919,14 @@ export default function App() {
                   </svg>
                   {t('Back', 'वापस')}
                 </button>
-                <span className={`status-pill status-pill--${result._pending ? 'pending' : liveActive ? 'live' : hasRain ? 'rain' : 'clear'}`}>
-                  {result._pending ? t('Scanning…', 'स्कैन हो रहा है…') : liveActive ? t('● LIVE', '● लाइव') : hasRain ? t('Rain ahead', 'आगे बारिश') : t('Clear skies', 'साफ आसमान')}
+                <span className={`status-pill status-pill--${result._pending ? 'pending' : liveActive ? 'live' : hasRain ? 'rain' : fogInfo.risk ? 'fog' : 'clear'}`}>
+                  {result._pending ? t('Scanning…', 'स्कैन हो रहा है…')
+                    : liveActive ? t('● LIVE', '● लाइव')
+                    : hasRain && fogInfo.tone === 'fog' ? t('Rain + fog', 'बारिश + कोहरा')
+                    : hasRain ? t('Rain ahead', 'आगे बारिश')
+                    : fogInfo.tone === 'fog' ? t('Fog risk', 'कोहरे का खतरा')
+                    : fogInfo.tone === 'watch' ? t('Fog watch', 'कोहरा सतर्कता')
+                    : t('Clear skies', 'साफ आसमान')}
                 </span>
               </nav>
 
@@ -2986,13 +2991,15 @@ export default function App() {
                         <span aria-hidden>{rainSummary.tone === 'clear' ? '☀' : '🌧'}</span> {rainSummary.text}
                       </span>
                     )}
-                    <span className={`rc-chip rc-chip--${fogSummary ? 'fog' : 'muted'}`}>
+                    <span className={`rc-chip rc-chip--${fogInfo.risk ? 'fog' : 'muted'}`}>
                       <span aria-hidden>🌫</span>{' '}
-                      {fogSummary
-                        ? (Number.isFinite(fogSummary.minVis)
-                          ? t(`Fog on ~${Math.round(fogSummary.km)} km · ${fmtVisibility(fogSummary.minVis)}`, `~${Math.round(fogSummary.km)} किमी पर कोहरा · ${fmtVisibility(fogSummary.minVis)}`)
-                          : t(`Fog on ~${Math.round(fogSummary.km)} km (satellite)`, `~${Math.round(fogSummary.km)} किमी पर कोहरा (सैटेलाइट)`))
-                        : routeFog ? (fogNote || t('No fog seen by satellite', 'सैटेलाइट को कोहरा नहीं दिखा')) : t('Checking fog…', 'कोहरा जाँच रहे हैं…')}
+                      {fogInfo.satZones.length
+                        ? t(`Fog now on ~${Math.round(fogInfo.satZones.reduce((a, z) => a + Math.max(0.5, z.endKm - z.startKm), 0))} km`, `अभी ~${Math.round(fogInfo.satZones.reduce((a, z) => a + Math.max(0.5, z.endKm - z.startKm), 0))} किमी पर कोहरा`)
+                        : fogInfo.aifsFog.length ? t('Fog likely when you pass', 'गुज़रते समय कोहरे की संभावना')
+                        : fogInfo.aifsZones.length ? t('Possible fog on route', 'रास्ते पर कोहरा संभव')
+                        : fogInfo.imdFog.length ? t('IMD fog watch', 'IMD कोहरा सतर्कता')
+                        : fogInfo.checking ? t('Checking fog…', 'कोहरा जाँच रहे हैं…')
+                        : t('No fog expected', 'कोहरे की संभावना नहीं')}
                     </span>
                     {result.radar_message && <span className="rc-chip rc-chip--muted"><span aria-hidden>📡</span> {result.radar_message}</span>}
                   </div>
@@ -3035,6 +3042,11 @@ export default function App() {
                 )}
               </section>
 
+              {/* Fog first when fog is the main hazard on a dry route */}
+              {!result._pending && fogInfo.risk && !hasRain && (
+                <FogRouteCard summary={fogInfo} satScene={fogScene} aifsRun={aifsRun} totalKm={routeDistanceKm} t={t} />
+              )}
+
               {/* Rain narrative banner */}
               {rainTimeline && !result._pending && (
                 <div
@@ -3052,7 +3064,13 @@ export default function App() {
                     </span>
                   )}
                   <p className="banner__head">{rainTimeline.headline}</p>
-                  {rainTimeline.secondary && <p className="banner__sub">{rainTimeline.secondary}</p>}
+                  {rainTimeline.secondary && (
+                    <p className="banner__sub">
+                      {rainTimeline.tone !== 'rain' && fogInfo.risk
+                        ? t('Radar sees no rain on this route.', 'रडार को इस रास्ते पर बारिश नहीं दिखी।')
+                        : rainTimeline.secondary}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -3064,6 +3082,11 @@ export default function App() {
                   showBreakdown={showBreakdown}
                   onToggleBreakdown={() => setShowBreakdown((s) => !s)}
                 />
+              )}
+
+              {/* Fog card in its usual place (after rain) */}
+              {!result._pending && !(fogInfo.risk && !hasRain) && (
+                <FogRouteCard summary={fogInfo} satScene={fogScene} aifsRun={aifsRun} totalKm={routeDistanceKm} t={t} />
               )}
 
               {/* IMD district warnings on the route */}
@@ -3117,8 +3140,9 @@ export default function App() {
 
               {/* Legend */}
               <div className="legend">
-                <span className="legend__title">{t('Route colors', 'रास्ते के रंग')}</span>
+                <span className="legend__title">{t('Map colors', 'नक्शे के रंग')}</span>
                 <div className="legend__chips">
+                  <span className="legend__group">{t('Rain', 'बारिश')}</span>
                   {[
                     { cls: 'veryheavy', label: t('Very Heavy', 'बहुत तेज़') },
                     { cls: 'heavy',     label: t('Heavy', 'तेज़') },
@@ -3133,9 +3157,14 @@ export default function App() {
                       <span className="legend__text">{label}</span>
                     </div>
                   ))}
+                  <span className="legend__group">{t('Fog', 'कोहरा')}</span>
                   <div className="legend__chip">
                     <span className="legend__swatch legend__swatch--fog" aria-hidden />
-                    <span className="legend__text">{t('Fog (< 1 km visibility)', 'कोहरा (< 1 किमी दृश्यता)')}</span>
+                    <span className="legend__text">{t('Fog', 'कोहरा')}</span>
+                  </div>
+                  <div className="legend__chip">
+                    <span className="legend__swatch legend__swatch--fogpossible" aria-hidden />
+                    <span className="legend__text">{t('Possible / patchy fog', 'संभव / छिटपुट कोहरा')}</span>
                   </div>
                 </div>
               </div>
