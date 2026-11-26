@@ -1,7 +1,8 @@
 """
 Where fog products are kept.
 
-SupabaseStore : Supabase Storage bucket (public read, service-role write) - production
+SupabaseStore : Supabase Storage bucket (public read, secret-key write) - production
+                accepts the new secret key (sb_secret_...) or a legacy service_role JWT
 LocalStore    : a local folder - for test runs on your own PC (--local DIR)
 
 Layout (same for both):
@@ -40,9 +41,13 @@ class SupabaseStore:
             raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set")
 
     def _headers(self, content_type, cache_s):
-        return {"Authorization": f"Bearer {self.key}", "apikey": self.key,
-                "Content-Type": content_type, "x-upsert": "true",
-                "cache-control": f"max-age={cache_s}"}
+        h = {"apikey": self.key, "Content-Type": content_type, "x-upsert": "true",
+             "cache-control": f"max-age={cache_s}"}
+        # Legacy service_role keys are JWTs and also go in Authorization.
+        # New secret keys (sb_secret_...) are not JWTs: apikey header only.
+        if not self.key.startswith("sb_"):
+            h["Authorization"] = f"Bearer {self.key}"
+        return h
 
     def put(self, path, data: bytes, content_type="application/octet-stream", cache_s=31536000):
         r = requests.post(f"{self.url}/storage/v1/object/{self.bucket}/{path}",
