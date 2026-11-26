@@ -55,8 +55,10 @@ Garaj Baras/
 ├── .github/workflows/
 │   ├── keep_alive.yml           ← cron */5: curl /health (keeps Render awake)
 │   ├── keepalive.yml            ← cron */10: same (duplicate, both active)
-│   └── fog_satellite.yml        ← cron every 30 min at night: satellite_worker/run.py (Meteosat-9 fog map → Supabase Storage)
+│   ├── fog_satellite.yml        ← cron every 30 min, day and night: satellite_worker/run.py (Meteosat-9 fog map → Supabase Storage)
+│   └── fog_aifs.yml             ← cron hourly: aifs_worker/run.py (newest ECMWF AIFS run → fog forecast grids → Supabase Storage)
 ├── satellite_worker/            ← NOT deployed to Render: downloads + processes Meteosat-9 scenes (satpy, eumdac); see its README
+├── aifs_worker/                 ← NOT deployed to Render: downloads ECMWF AIFS open data (ecmwf-opendata, eccodes) → fog forecast; see its README
 ├── backend/                     ← FastAPI app (run from inside this dir)
 │   ├── main.py                  ← API endpoints + per-radar state cache + LRU eviction (THE hub)
 │   ├── radar.py                 ← Delhi GIF download/frame-extraction/OCR-timestamp + shared helpers
@@ -68,6 +70,8 @@ Garaj Baras/
 │   ├── decay.py                 ← per-cell dBZ trend tracks (stable/weakening/dying/dead)
 │   ├── fuzzy.py                 ← RGB → dBZ → label; enrich_results() for route waypoints
 │   ├── prediction.py            ← OSRM route building + rain-mask-shift route check
+│   ├── fog_satellite.py         ← satellite fog per waypoint from the precomputed Meteosat-9 scene (Supabase Storage)
+│   ├── fog_aifs.py              ← ECMWF AIFS fog forecast per waypoint at arrival time (precomputed run, Supabase Storage)
 │   ├── nowcast.py               ← 8-slot point forecast engine (compute_nowcast_slots)
 │   ├── forecast_gif.py          ← renders the forecast animation (GIF + frame payloads)
 │   ├── db.py                    ← DB backend switch: Postgres when DATABASE_URL is set (prod), else SQLite
@@ -552,6 +556,28 @@ Actions only (`EUMETSAT_USERNAME/PASSWORD` - EUMETSAT's OAuth2 login since Nov 2
 Tests: `python -m pytest satellite_worker/test_worker.py` (offline end-to-end:
 fake scenes → real worker → local store → real backend module).
 
+### ECMWF AIFS fog forecast (fog_aifs.py + aifs_worker/)
+
+The satellite shows where fog is now; AIFS forecasts whether fog is likely when
+the driver gets there. The `fog_aifs.yml` GitHub Action runs
+`aifs_worker/run.py` hourly; it finds the newest AIFS Single run on ECMWF open
+data (4 runs/day, 6-hourly steps, 0.25°, CC-BY-4.0, mirrors ecmwf → aws →
+azure; runs already processed exit immediately), downloads 2t, 2d, 10u, 10v,
+lcc for steps 0–72 h, crops to the satellite box (72–89°E, 23–33°N; 41×69
+cells), computes dew-point depression, wind speed and low cloud per step plus a
+fog class (fog: dpd ≤ 1 K & wind ≤ 3 m/s, or lcc ≥ 80 % & dpd ≤ 1.5 K & wind
+≤ 4 m/s; possible: dpd ≤ 2 K & wind ≤ 5 m/s; uncalibrated first guess), and
+uploads `aifs/run_YYYYMMDDHH.npz` (~50 KB) + `aifs/latest.json` (run, fog share
+per step, the rule thresholds) to the same `fog-satellite` bucket.
+
+`fog_aifs.py` re-checks the manifest every 10 min (60 s while empty) and keeps
+only the newest run in memory (<1 MB). Per waypoint: valid time = now + ETA;
+the two steps around it are blended linearly in time and the 4 surrounding cells
+bilinearly, then the manifest's rule is applied → fog / possible / clear;
+outside the box → outside; after the last step → beyond. Run older than 24 h →
+state stale (still answered). Tests: `python -m pytest aifs_worker/test_aifs.py`
+(fake GRIB fields → real worker → local store → real backend module).
+
 ## 8. Georeferencing (georef*.py)
 
 Per radar, a **quadratic** fit (`px = c0 + c1·lat + c2·lon + c3·lat·lon +
@@ -595,6 +621,8 @@ reusing any GCP numbers.
 | `/health` | GET | Liveness (also the keep-alive target) |
 | `/fog/satellite` | POST | Body `{waypoints:[{lat,lon,eta_mins}]}` → `{scene, points}`: satellite fog status per waypoint (night and day) (`fog`/`patchy`/`approaching`/`forming`/`clear`/`unknown`/`daytime`/`stale`/`no_data`/`outside`), with `nearest_patch` / `soonest_patch` details from the newest precomputed Meteosat-9 fog map (`fog_satellite.py`). Best-effort, never 500s. |
 | `/fog/satellite/status` | GET | Newest satellite fog scene: time, age, fog/unknown share, state |
+| `/fog/aifs` | POST | Body `{waypoints:[{lat,lon,eta_mins}]}` → `{run, points}`: ECMWF AIFS fog forecast per waypoint at arrival time (`fog`/`possible`/`clear`/`outside`/`beyond`/`no_data`, with `dpd_k`, `wind_ms`, `lcc`, `valid`, `lead_h`) from the newest precomputed run (`fog_aifs.py`). Best-effort, never 500s. |
+| `/fog/aifs/status` | GET | Newest AIFS run: run time, age (h), last forecast time, state (ok/stale/no_data) |
 | `/debug/cache` | GET | Per-radar cache freshness/ready diagnostics |
 | `/movement` | GET | Global rain movement over Delhi NCR |
 | `/radar/gif?radar=` | GET | Latest downloaded radar GIF (delhi/lucknow/patna/bhopal/jaipur/paradip/patiala/nagpur/sohra/mahabaleshwar/mangaluru/thiruvananthapuram) |
@@ -753,7 +781,7 @@ Single-page React app, all UI in **App.jsx** (~1900 lines), three tabs
   subscribes to push via `/alerts/subscribe` with the auth header) and
   `SavedPlaces.jsx` (CRUD on `/locations`; tapping a place loads it into the
   nowcast picker).
-- **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. **Satellite** (default) is live: after each prediction `App.jsx` calls `fetchSatelliteFog` (non-blocking) → `routeFog` points + `fogScene`; fog/patchy/approaching waypoints become dashed fog zones, and the chooser/route chip/nav chip show the satellite state (delayed, cloud-hidden points, dawn/dusk unknown) instead of a misleading "No fog". ECMWF and General Model still show "Coming soon" and draw nothing. Satellite points carry no visibility (`visM` NaN), so chips omit the visibility value. India Radar is removed from the frontend; backend mosaic endpoints remain available.
+- **Fog controls:** the right-side map control offers Satellite, ECMWF, and General Model. **Satellite** (default) is live: after each prediction `App.jsx` calls `fetchSatelliteFog` (non-blocking) → `routeFog` points + `fogScene`; fog/patchy/approaching waypoints become dashed fog zones, and the chooser/route chip/nav chip show the satellite state (delayed, cloud-hidden points, dawn/dusk unknown) instead of a misleading "No fog". **ECMWF** is live too: `App.jsx` also calls `fetchAifsFog` → `aifsFog` points + `aifsRun`, passed to both RouteMaps; choosing ECMWF draws AIFS fog/possible stretches and the chooser shows e.g. "Fog risk on 2 stretch(es) (AIFS 06 UTC)". The route chip and nav chip stay satellite-based. General Model still shows "Coming soon". Satellite points carry no visibility (`visM` NaN), so chips omit the visibility value. India Radar is removed from the frontend; backend mosaic endpoints remain available.
 - **Chatbot location lookup (`chatbot.py`):** Nominatim searches are serialized with at least 1.1 seconds between requests. A bounded 256-entry cache keeps successful locations for 24 hours; repeated concurrent searches share the cached result. HTTP 403/429/503 responses start a provider cooldown (Retry-After respected, bounded to 60–3600 seconds). Photon is an India-filtered fallback for rejected, failed, or empty lookups. Errors never become cached locations or invented coordinates. Both providers failing returns a retryable location error. Gemini failures try the remaining keys before Groq; only actual HTTP 429 exhaustion is reported as quota exhaustion, and Groq-only setup does not require the Gemini SDK.
 - **Chat tab (`ChatPage`):** streams `/chat` SSE, shows tool-call status.
   Gated behind sign-in (`SignInGate`).

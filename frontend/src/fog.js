@@ -72,6 +72,63 @@ export function satelliteNote(scene, points, t) {
   return null
 }
 
+// Backend: POST /fog/aifs → per-waypoint ECMWF AIFS fog forecast at the time
+// the driver reaches it (aifs_worker/ → Supabase Storage). AIFS has no
+// visibility field: fog = near-saturated air + light wind (+ low cloud).
+const AIFS_LEVEL = { fog: 'thick', possible: 'fog' }
+
+export async function fetchAifsFog(apiBase, waypoints, signal) {
+  const wps = (waypoints || []).filter(
+    (w) => Number.isFinite(Number(w?.lat)) && Number.isFinite(Number(w?.lon)) && Number.isFinite(w?._cumKm),
+  )
+  if (!wps.length) return { run: null, points: [] }
+  const { data } = await axios.post(
+    `${apiBase}/fog/aifs`,
+    { waypoints: wps.map((w) => ({ lat: Number(w.lat), lon: Number(w.lon), eta_mins: Number(w.eta_mins) || 0 })) },
+    { signal, timeout: 20000 },
+  )
+  const pts = Array.isArray(data?.points) ? data.points : []
+  const points = wps.map((w, i) => {
+    const p = pts[i] || {}
+    return {
+      lat: Number(w.lat),
+      lon: Number(w.lon),
+      cumKm: w._cumKm,
+      etaMins: Number(w.eta_mins) || 0,
+      visM: NaN,
+      status: p.status || 'no_data',
+      level: AIFS_LEVEL[p.status] || null,
+      dpdK: p.dpd_k ?? null,
+      windMs: p.wind_ms ?? null,
+    }
+  }).sort((a, b) => a.cumKm - b.cumKm)
+  return { run: data?.run || null, points }
+}
+
+/** "AIFS 06 UTC run" style label for the run time (IST shown in brackets). */
+function aifsRunLabel(run) {
+  const m = /T(\d\d)/.exec(run?.run || '')
+  return m ? `AIFS ${m[1]} UTC` : 'AIFS'
+}
+
+/** One-line state of the ECMWF AIFS source. */
+export function aifsNote(run, points, t, stretches = 0) {
+  const state = run?.state
+  if (!state || state === 'no_data') return t('ECMWF fog forecast unavailable', 'ECMWF कोहरा पूर्वानुमान उपलब्ध नहीं')
+  const label = aifsRunLabel(run)
+  const delayed = state === 'stale' ? t(' · forecast is old', ' · पूर्वानुमान पुराना है') : ''
+  const pts = points || []
+  const fog = pts.filter((p) => p.status === 'fog').length
+  const possible = pts.filter((p) => p.status === 'possible').length
+  const beyond = pts.filter((p) => p.status === 'beyond').length
+  let main
+  if (stretches) main = t(`Fog risk on ${stretches} stretch(es)`, `${stretches} हिस्सों पर कोहरे का खतरा`)
+  else if (fog || possible) main = t('Fog risk on the route', 'रास्ते पर कोहरे का खतरा')
+  else main = t('No fog expected', 'कोहरे की संभावना नहीं')
+  const extra = beyond ? t(` · ${beyond} point(s) beyond forecast`, ` · ${beyond} बिंदु पूर्वानुमान से आगे`) : ''
+  return `${main} (${label})${delayed}${extra}`
+}
+
 export function fmtVisibility(visM) {
   if (!Number.isFinite(visM)) return '—'
   return visM >= 1000 ? `${(visM / 1000).toFixed(1)} km` : `${Math.round(visM / 10) * 10} m`
