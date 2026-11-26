@@ -4,7 +4,7 @@ import 'leaflet-rotate'
 import { MapContainer, Marker, Popup, Polyline, TileLayer } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useT, tr } from './i18n'
-import { FOG_COLORS, fogZones, satelliteNote } from './fog'
+import { FOG_COLORS, aifsNote, fogZones, satelliteNote } from './fog'
 import { baseTiles } from './mapTiles'
 
 // Localize a backend rain-intensity label for display.
@@ -193,6 +193,8 @@ export default function RouteMap({
   livePos,          // {lat, lon, heading} while a live journey is running, else null
   fog,              // [{cumKm, visM, level}] from fog.js, or null
   fogScene = null,  // satellite scene state from /fog/satellite (time, daytime/stale)
+  fogAifs = null,   // ECMWF AIFS fog points from /fog/aifs, or null while checking
+  aifsRun = null,   // AIFS run state (run time, age, ok/stale/no_data)
   navMode = false,  // full-screen turn-by-turn map (heading-up, follow-me)
   weatherMode = null, // controlled rain/fog mode in navigation
   onWeatherModeChange,
@@ -204,7 +206,7 @@ export default function RouteMap({
   const [rainLayerOn, setRainLayerOn] = useState(true)
   const [fogLayerOn, setFogLayerOn] = useState(true)
   const [fogOptionsOpen, setFogOptionsOpen] = useState(false)
-  const [fogSource, setFogSource] = useState('satellite') // only Satellite has live data so far
+  const [fogSource, setFogSource] = useState('satellite') // satellite (now) | ecmwf (AIFS forecast) | general-model (soon)
   const showRain = navMode ? weatherMode !== 'fog' : rainLayerOn
   const showFog = navMode ? weatherMode === 'fog' : fogLayerOn
   const [headingUp, setHeadingUp] = useState(true)
@@ -392,9 +394,10 @@ export default function RouteMap({
     return cum
   }, [routeCoords])
 
+  const activeFog = fogSource === 'satellite' ? fog : fogSource === 'ecmwf' ? fogAifs : null
   const fogLines = useMemo(() => {
-    if (fogSource !== 'satellite' || !routeCumKm || !Array.isArray(fog) || !fog.length) return []
-    return fogZones(fog)
+    if (!routeCumKm || !Array.isArray(activeFog) || !activeFog.length) return []
+    return fogZones(activeFog)
       .map((z) => {
         // a single-point zone still deserves a visible stretch (±0.5 km)
         const short = z.endKm - z.startKm < 0.2
@@ -403,9 +406,11 @@ export default function RouteMap({
         return { ...z, positions: sliceRoute(routeCoords, routeCumKm, Math.max(0, a), b) }
       })
       .filter((z) => z.positions.length >= 2)
-  }, [fog, fogSource, routeCoords, routeCumKm])
+  }, [activeFog, routeCoords, routeCumKm])
 
-  const fogStatusText = fogSource !== 'satellite'
+  const fogStatusText = fogSource === 'ecmwf'
+    ? (fogAifs == null ? t('Checking fog…', 'कोहरा जाँच रहे हैं…') : aifsNote(aifsRun, fogAifs, t, fogLines.length))
+    : fogSource !== 'satellite'
     ? t('Coming soon', 'जल्द आ रहा है')
     : fog == null
       ? t('Checking fog…', 'कोहरा जाँच रहे हैं…')

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
-import { fogZones, fmtVisibility, fetchSatelliteFog, satelliteNote } from './fog'
+import { fogZones, fmtVisibility, fetchAifsFog, fetchSatelliteFog, satelliteNote } from './fog'
 import { fetchRouteImdWarnings } from './imdWarnings'
 import { ImdRouteWarnings } from './ImdRouteWarnings'
 import { ManeuverIcon, fmtDist, maneuverText, streetName } from './maneuvers'
@@ -2196,6 +2196,8 @@ export default function App() {
   const [routeSteps, setRouteSteps] = useState([]) // ORS turn-by-turn maneuvers
   const [routeFog, setRouteFog] = useState(null)   // satellite fog points along the route (null = checking)
   const [fogScene, setFogScene] = useState(null)   // satellite scene state (time, age, daytime/stale)
+  const [aifsFog, setAifsFog] = useState(null)     // ECMWF AIFS fog forecast points (null = checking)
+  const [aifsRun, setAifsRun] = useState(null)     // AIFS run state
   const [routeImd, setRouteImd] = useState(null)   // IMD district warnings on the route
   const [showSteps, setShowSteps] = useState(false)
   const [shareNote, setShareNote] = useState(null)
@@ -2290,7 +2292,7 @@ export default function App() {
     }
     if (!ORS_KEY) { setError(t('Missing ORS API key. Set `VITE_ORS_API_KEY` in frontend/.env.', 'ORS API key नहीं है। frontend/.env में `VITE_ORS_API_KEY` सेट करें।')); return }
 
-    setError(null); setLoading(true); setResult(null); setRouteFog(null); setFogScene(null)
+    setError(null); setLoading(true); setResult(null); setRouteFog(null); setFogScene(null); setAifsFog(null); setAifsRun(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null)
     setScanning(false); setScanStatus('')
     warmBackend()
@@ -2395,6 +2397,10 @@ export default function App() {
       fetchSatelliteFog(API_BASE, mergedWaypoints)
         .then(({ scene, points }) => { setFogScene(scene); setRouteFog(points) })
         .catch(() => { setFogScene(null); setRouteFog([]) })
+      // ECMWF AIFS fog forecast at each arrival time (optional, non-blocking).
+      fetchAifsFog(API_BASE, mergedWaypoints)
+        .then(({ run, points }) => { setAifsRun(run); setAifsFog(points) })
+        .catch(() => { setAifsRun(null); setAifsFog([]) })
       if ((predictRes.data?.radar_lag_mins ?? 0) > 75) {
         setRadarDown(true)
       }
@@ -2556,7 +2562,7 @@ export default function App() {
 
   function handleBackToPlanner() {
     endLiveJourney()
-    setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null); setRouteFog(null); setFogScene(null)
+    setResult(null); setError(null); setActiveSeg(null); setJourneyStop(null); setRouteFog(null); setFogScene(null); setAifsFog(null); setAifsRun(null)
     setRouteCoords([]); setRouteSegments([]); setRouteDistanceKm(null); setShowBreakdown(false)
     setRadarDown(false); setRouteSteps([]); setRouteImd(null)
   }
@@ -2941,6 +2947,8 @@ export default function App() {
                     livePos={null}
                     fog={routeFog}
                     fogScene={fogScene}
+                    fogAifs={aifsFog}
+                    aifsRun={aifsRun}
                     height="46vh"
                   />
                 </Suspense>
@@ -3075,6 +3083,8 @@ export default function App() {
                       livePos={livePos}
                       fog={routeFog}
                       fogScene={fogScene}
+                    fogAifs={aifsFog}
+                    aifsRun={aifsRun}
                       weatherMode={navWeatherMode}
                       onWeatherModeChange={setNavWeatherMode}
                     />

@@ -32,6 +32,7 @@ import alerts  # type: ignore
 import journeys  # type: ignore
 import imd_warnings  # type: ignore
 import fog_satellite  # type: ignore
+import fog_aifs  # type: ignore
 import accounts  # type: ignore
 from auth import get_current_user, get_optional_user  # type: ignore
 from patches import (  # type: ignore
@@ -2954,6 +2955,26 @@ def fog_satellite_route(payload: PredictWaypointsRequest):
 def fog_satellite_status():
     """Newest satellite fog scene: time, age, fog/unknown share, state."""
     return fog_satellite.status()
+
+
+@app.post("/fog/aifs")
+def fog_aifs_route(payload: PredictWaypointsRequest):
+    """ECMWF AIFS fog forecast per waypoint at the driver's arrival time
+    (precomputed by aifs_worker/, read from Supabase Storage). Never fails the
+    caller: problems come back as status "no_data"."""
+    try:
+        return fog_aifs.route_fog(
+            [{"lat": wp.lat, "lon": wp.lon, "eta_mins": wp.eta_mins} for wp in payload.waypoints]
+        )
+    except Exception as e:
+        traceback.print_exc()
+        return {"run": {"state": "no_data", "error": str(e)}, "points": []}
+
+
+@app.get("/fog/aifs/status")
+def fog_aifs_status():
+    """Newest AIFS run used for fog: run time, age, last forecast time, state."""
+    return fog_aifs.status()
 
 
 @app.get("/alerts/debug")
