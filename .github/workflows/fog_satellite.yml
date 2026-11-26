@@ -1,0 +1,51 @@
+name: Satellite fog worker
+
+# One Meteosat-9 scene -> fog map -> Supabase Storage, every 30 min at night.
+# Night over North India ~ 12:00-02:30 UTC (17:30-08:00 IST); daytime runs are
+# skipped by the script itself. GitHub cron is best-effort (runs can be late);
+# the worker uses the real scan times, and the backend flags stale scenes.
+#
+# Repo secrets needed (Settings -> Secrets and variables -> Actions):
+#   EUMETSAT_KEY, EUMETSAT_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# Until they exist, runs exit successfully with "not configured".
+
+on:
+  schedule:
+    - cron: "7,37 12-23 * * *"
+    - cron: "7,37 0-2 * * *"
+  workflow_dispatch:
+    inputs:
+      time:
+        description: "Optional UTC time to (re)process, e.g. 2026-12-20T21:00"
+        required: false
+
+concurrency:
+  group: fog-satellite
+  cancel-in-progress: false
+
+jobs:
+  scene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: satellite_worker
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: satellite_worker/requirements.txt
+      - run: pip install -r satellite_worker/requirements.txt
+      - name: Process newest scene
+        env:
+          EUMETSAT_KEY: ${{ secrets.EUMETSAT_KEY }}
+          EUMETSAT_SECRET: ${{ secrets.EUMETSAT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.time }}" ]; then
+            python satellite_worker/run.py --time "${{ github.event.inputs.time }}" --force
+          else
+            python satellite_worker/run.py
+          fi

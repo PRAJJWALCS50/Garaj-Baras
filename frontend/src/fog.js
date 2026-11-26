@@ -24,6 +24,52 @@ export const FOG_COLORS = {
   fog: '#94A3B8',
 }
 
+// ── Satellite fog (Meteosat-9 night fog maps via the backend) ─────────────────
+// Backend: POST /fog/satellite → per-waypoint status from the newest precomputed
+// fog map (satellite_worker/ → Supabase Storage). The satellite sees fog, not
+// visibility, so visM stays NaN and the level encodes how sure we are.
+const SAT_LEVEL = { fog: 'thick', patchy: 'fog', approaching: 'fog' }
+
+export async function fetchSatelliteFog(apiBase, waypoints, signal) {
+  const wps = (waypoints || []).filter(
+    (w) => Number.isFinite(Number(w?.lat)) && Number.isFinite(Number(w?.lon)) && Number.isFinite(w?._cumKm),
+  )
+  if (!wps.length) return { scene: null, points: [] }
+  const { data } = await axios.post(
+    `${apiBase}/fog/satellite`,
+    { waypoints: wps.map((w) => ({ lat: Number(w.lat), lon: Number(w.lon), eta_mins: Number(w.eta_mins) || 0 })) },
+    { signal, timeout: 20000 },
+  )
+  const pts = Array.isArray(data?.points) ? data.points : []
+  const points = wps.map((w, i) => {
+    const p = pts[i] || {}
+    return {
+      lat: Number(w.lat),
+      lon: Number(w.lon),
+      cumKm: w._cumKm,
+      etaMins: Number(w.eta_mins) || 0,
+      visM: NaN,
+      status: p.status || 'no_data',
+      level: SAT_LEVEL[p.status] || null,
+      distKm: p.dist_km ?? null,
+      fogEtaMins: p.fog_eta_mins ?? null,
+    }
+  }).sort((a, b) => a.cumKm - b.cumKm)
+  return { scene: data?.scene || null, points }
+}
+
+/** One-line state of the satellite source, or null when it is working normally. */
+export function satelliteNote(scene, points, t) {
+  const state = scene?.state
+  if (!state) return t('Satellite fog unavailable', 'सैटेलाइट कोहरा उपलब्ध नहीं')
+  if (state === 'daytime') return t('Satellite fog works at night only', 'सैटेलाइट कोहरा केवल रात में')
+  if (state === 'stale') return t('Satellite data is delayed', 'सैटेलाइट डेटा देर से है')
+  if (state !== 'ok') return t('Satellite fog unavailable', 'सैटेलाइट कोहरा उपलब्ध नहीं')
+  const unknown = (points || []).filter((p) => p.status === 'unknown').length
+  if (unknown) return t(`Cloud hides ${unknown} point(s) — fog unknown there`, `${unknown} बिंदु बादल से छिपे — वहाँ कोहरा अज्ञात`)
+  return null
+}
+
 export function fmtVisibility(visM) {
   if (!Number.isFinite(visM)) return '—'
   return visM >= 1000 ? `${(visM / 1000).toFixed(1)} km` : `${Math.round(visM / 10) * 10} m`
@@ -81,6 +127,8 @@ export async function fetchRouteFog(waypoints, signal) {
   }).sort((a, b) => a.cumKm - b.cumKm)
 }
 
+const LEVEL_RANK = { fog: 1, thick: 2, dense: 3 }
+
 /** Contiguous foggy stretches → [{ startKm, endKm, minVis, level }] */
 export function fogZones(fog) {
   const pts = fog || []
@@ -95,6 +143,7 @@ export function fogZones(fog) {
     if (last && Math.abs(last.endKm - startKm) < 1e-6) {
       last.endKm = endKm
       if (p.visM < last.minVis) { last.minVis = p.visM; last.level = p.level }
+      else if ((LEVEL_RANK[p.level] || 0) > (LEVEL_RANK[last.level] || 0)) last.level = p.level
     } else {
       zones.push({ startKm, endKm, minVis: p.visM, level: p.level })
     }
