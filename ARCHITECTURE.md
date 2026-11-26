@@ -546,7 +546,7 @@ newest scene in memory (~0.5 MB, fits the 512 MB budget). Per waypoint it reads 
 3×3 window (~15 km): ≥3 fog pixels → fog, 1–2 → patchy, >4 unknown → unknown;
 otherwise each patch within 50 km gets approach = growth + drift toward the
 waypoint and ETA = distance ÷ approach; soonest ETA before the driver (+15 min)
-→ approaching; else a just-born patch within 15 km → forming; else clear. Scenes older than 75 min → stale. Env: `SUPABASE_URL` (already set)
+→ approaching; else a just-born patch within 15 km → forming; else clear. Scenes older than 75 min → stale, except while the sun is up over the plain (−3° at 27.5°N 80°E) → daytime; the frontend shows daytime as "No fog" (product choice; the night method cannot see morning fog). Env: `SUPABASE_URL` (already set)
 or `FOG_SAT_BASE_URL` (tests / `file://` folder). Worker secrets live in GitHub
 Actions only (`EUMETSAT_USERNAME/PASSWORD` - EUMETSAT's OAuth2 login since Nov 2026; the old API key can search but not download - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
 Tests: `python -m pytest satellite_worker/test_worker.py` (offline end-to-end:

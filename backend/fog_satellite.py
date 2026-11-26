@@ -100,6 +100,25 @@ def _refresh(force=False):
             print(f"[fog_satellite] refresh failed: {_state['error']}")
 
 
+REGION_CENTRE = (27.5, 80.0)  # middle of the Indo-Gangetic Plain
+
+
+def _sun_up_now(now=None):
+    """True when the sun is above -3 deg at the middle of the plain (night method unusable)."""
+    now = now or datetime.now(timezone.utc)
+    doy = now.timetuple().tm_yday
+    hour = now.hour + now.minute / 60
+    g = 2 * math.pi / 365 * (doy - 1 + (hour - 12) / 24)
+    eqt = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                    - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g)
+            - 0.006758 * math.cos(2 * g) + 0.000907 * math.sin(2 * g))
+    lat, lon = map(math.radians, REGION_CENTRE)
+    ha = math.radians((hour * 60 + eqt + 4 * REGION_CENTRE[1]) / 4 - 180)
+    elev = math.degrees(math.asin(math.sin(lat) * math.sin(decl) + math.cos(lat) * math.cos(decl) * math.cos(ha)))
+    return elev > -3.0
+
+
 def _parse_time(s):
     return datetime.strptime(s[:16], "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc)
 
@@ -117,6 +136,8 @@ def status():
         state = "no_data"
     elif m.get("status") == "day":
         state = "daytime"
+    elif (newest is None or (age is not None and age > STALE_AFTER_MIN)) and _sun_up_now():
+        state = "daytime"           # no fresh scene because it is day, not because something broke
     elif newest is None:
         state = "no_data"
     elif age is not None and age > STALE_AFTER_MIN:
