@@ -22,9 +22,19 @@ SEARCH_BACK_MIN = 50          # look for the newest scan in the last N minutes
 RESAMPLE_RADIUS_M = 10_000
 
 # ── Night-time fog test (per pixel) ─────────────────────────────────────────
-# Fog / low stratus at night: T10.8 - T3.9 above BTD_FOG_K, and the cloud top
+# Fog / low stratus at night: T10.8 - T3.9 above a threshold, and the cloud top
 # is warm (near the ground). Cold tops = high cloud = we cannot see below.
-BTD_FOG_K = 2.5               # first guess; tune against airport METAR
+#
+# The threshold is found PER SCENE: the BTD histogram of a fog night has two humps
+# (clear land ~2 K, fog ~5.5 K on 3-4 Jan 2025); the valley between them is the
+# cut-off. Clear-night background shifts with humidity and ground (west Rajasthan
+# desert reads 3.2-4.1 K even when clear), so a fixed 2.5 K marked half the
+# region as fog. If no valley is found, BTD_FOG_K is used.
+BTD_FOG_K = 4.25              # fallback (valley on the 3-4 Jan 2025 test night)
+BTD_SEARCH_K = (3.25, 5.25)   # look for the valley in this range
+BTD_CLAMP_K = (3.75, 5.0)     # never use a threshold outside this range
+CLEAN_MIN_NEIGHBOURS = 3      # fog pixel with fewer fog neighbours (of 8) -> noise, removed
+FILL_MIN_NEIGHBOURS = 6       # clear pixel with this many fog neighbours -> hole, filled
 T108_HIGH_CLOUD_K = 255.0     # colder than this -> "unknown" (blind)
 SUN_ELEV_NIGHT_DEG = -3.0     # sun higher than this -> 3.9 um contaminated -> "unknown"
 

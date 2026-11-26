@@ -24,10 +24,18 @@ backend/fog_satellite.py  →  POST /fog/satellite  →  frontend "Satellite" fo
 |---|---|
 | sun higher than −3° (day / twilight) | unknown |
 | T10.8 < 255 K (cold high cloud on top) | unknown |
-| T10.8 − T3.9 > 2.5 K | **fog / low stratus** |
+| T10.8 − T3.9 > per-scene threshold | **fog / low stratus** |
 | otherwise | clear |
 
-Thresholds are first guesses in `config.py`; tune them against airport METAR.
+**Threshold = valley of each scene's BTD histogram** (clear-land hump vs fog
+hump), clamped to 3.75–5.0 K, fallback 4.25 K. Then isolated specks are removed
+and small holes filled. A fixed 2.5 K marked 56% of the region as fog on the
+first real test (west Rajasthan desert reads 3.2–4.1 K even when clear).
+
+First real test (Meteosat-9, 2025-01-03 22:00 UTC / 03:30 IST): thresholds
+4.62 / 4.38 / 4.38 K, fog share 25%, ~20 patches. Satellite fog at Delhi and
+Lucknow (both airports reported 0 m visibility), clear at Jaipur (~2 km).
+One night only - validate across many nights vs METAR before trusting.
 
 ## Fog patches (why not just "distance to nearest fog")
 

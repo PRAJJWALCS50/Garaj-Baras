@@ -532,8 +532,8 @@ IMD radar can't see fog, so fog comes from Meteosat-9 (EUMETSAT, Indian Ocean
 coverage) night images. **All heavy work happens outside Render:** the
 `fog_satellite.yml` GitHub Action runs `satellite_worker/run.py` every 30 min at
 night; it downloads the newest scan, keeps the 3.9/10.8 µm channels on a 0.05°
-grid over 72–89°E, 23–33°N, classifies each pixel (fog = T10.8−T3.9 > 2.5 K with a
-warm top; unknown = cold high cloud or sun above −3°), computes distance-to-fog,
+grid over 72–89°E, 23–33°N, classifies each pixel (fog = T10.8−T3.9 above a per-scene threshold = valley of
+the BTD histogram, clamped 3.75–5.0 K, then speckle removal; warm top; unknown = cold high cloud or sun above −3°), computes distance-to-fog,
 splits fog into **patches** (touching pixels) and tracks them against the
 previous scene by pixel overlap (born / tracked / merged / split / untracked,
 persistent ids, growth = equivalent-radius change, drift = centre movement; new

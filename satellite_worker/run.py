@@ -51,7 +51,8 @@ def manifest_base(now):
         "satellite": "Meteosat-9 IODC (SEVIRI)",
         "grid": C.GRID,
         "classes": {"clear": C.CLEAR, "fog": C.FOG, "unknown": C.UNKNOWN},
-        "thresholds": {"btd_fog_k": C.BTD_FOG_K, "t108_high_cloud_k": C.T108_HIGH_CLOUD_K,
+        "thresholds": {"btd_fog_k_fallback": C.BTD_FOG_K, "btd_method": "per-scene histogram valley",
+                       "t108_high_cloud_k": C.T108_HIGH_CLOUD_K,
                        "sun_elev_night_deg": C.SUN_ELEV_NIGHT_DEG},
     }
 
@@ -107,7 +108,7 @@ def process(args):
         t039, t108 = fetch.to_grid(nat)
 
     # 4. products
-    fog = F.classify(t039, t108, F.sun_elevation(t, lats, lons))
+    fog, thr_info = F.classify(t039, t108, F.sun_elevation(t, lats, lons), return_info=True)
     dist = F.distance_km(fog)
     labels, props = F.label_patches(fog, lats, lons)
     prev = sorted((s for s in old if parse_iso(s["time"]) < t), key=lambda s: s["time"], reverse=True)
@@ -117,7 +118,7 @@ def process(args):
         gap = (t - parse_iso(prev[0]["time"])).total_seconds() / 60
     ids, table, next_id = F.track_patches(labels, props, prev_ids, prev_table, gap,
                                           int(manifest.get("next_patch_id", 1)))
-    stats = F.scene_stats(fog)
+    stats = {**F.scene_stats(fog), **thr_info}
     counts = {k: int((table["status"] == v).sum()) for k, v in F.STATUS.items()}
     stats["patches"] = int(len(table["id"]))
     log(f"scene {iso(t)}: {stats}, patch status {counts}")

@@ -41,13 +41,25 @@ def test_sun_elevation_day_night():
 
 
 def test_classify_rules():
-    t108 = np.array([[285, 285, 240, 285]], dtype=np.float32)
-    t039 = np.array([[281, 284.5, 236, np.nan]], dtype=np.float32)
+    rng = np.random.default_rng(0)
+    t108 = np.full((80, 80), 285.0, np.float32)
+    btd = rng.normal(2.2, 0.4, t108.shape).astype(np.float32)      # clear land ~2.2 K
+    btd[10:50, 10:50] = rng.normal(5.5, 0.4, (40, 40))              # fog blanket ~5.5 K
+    btd[60:70, 60:70] = 2.0
+    t108[60:70, 60:70] = 240.0                                      # cold high cloud
+    btd[0, 0] = np.nan
+    btd[75, 5] = 6.0                                                # single-pixel speck
     sun = np.full(t108.shape, -50.0)
-    out = F.classify(t039, t108, sun)
-    # BTD 4 -> fog, BTD 0.5 -> clear, cold top -> unknown, missing -> unknown
-    assert out.tolist() == [[C.FOG, C.CLEAR, C.UNKNOWN, C.UNKNOWN]]
-    assert (F.classify(t039, t108, np.full(t108.shape, 10.0)) == C.UNKNOWN).all()
+    out, info = F.classify(t108 - btd, t108, sun, return_info=True)
+    assert info["threshold_method"] == "valley" and 3.75 <= info["btd_threshold_k"] <= 5.0
+    assert (out[15:45, 15:45] == C.FOG).all()
+    assert (out[55:58, 5:50] == C.CLEAR).all()
+    assert (out[60:70, 60:70] == C.UNKNOWN).all() and out[0, 0] == C.UNKNOWN
+    assert out[75, 5] == C.CLEAR                                    # speck removed
+    assert (F.classify(t108 - btd, t108, np.full(t108.shape, 10.0)) == C.UNKNOWN).all()
+    # no fog hump (clear night) -> fallback threshold, nothing marked fog
+    clear, info = F.classify(t108 - rng.normal(2.2, 0.4, t108.shape), t108, sun, return_info=True)
+    assert info["threshold_method"] == "fallback" and (clear != C.FOG).all()
 
 
 def test_distance():
