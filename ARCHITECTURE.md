@@ -41,7 +41,7 @@ free-tier deployment.
 |---|---|
 | Backend | Python 3.11, FastAPI + uvicorn, NumPy, OpenCV, Pillow, pytesseract (dev only), pywebpush, httpx/requests, Postgres (Supabase, prod) / SQLite (dev fallback) via `db.py` |
 | Frontend | React 19 + Vite 8, react-leaflet/Leaflet (maps), axios. Single-page app, 3 tabs. |
-| External services | IMD radar GIFs (data source), OSRM public demo (routing), Nominatim (geocoding), Open-Meteo (cloud-cover cross-check, currently not wired in), Gemini 2.5 Flash / Groq (chatbot), Web Push (VAPID) |
+| External services | IMD radar GIFs (data source), OSRM public demo (routing), Nominatim (geocoding), Open-Meteo (cloud-cover cross-check, currently not wired in), Gemini 3.5 Flash / Groq gpt-oss-120b (chatbot), Web Push (VAPID) |
 | Hosting | Backend: **Render free tier (512 MB RAM — the central constraint)** at `https://garaj-baras-api.onrender.com`. Frontend: Vercel/Netlify (static Vite build). GitHub Actions ping `/health` every 5–10 min to keep Render awake. |
 
 ## 3. Repository layout
@@ -494,11 +494,12 @@ deactivate their journey. Table `journeys` lives in the alerts DB
 (Postgres in prod via db.py, alerts.db SQLite in dev).
 
 ### Chatbot (chatbot.py)
-Gemini 2.5 Flash with function calling; tools are the **in-process** endpoint
+Gemini 3.5 Flash (`GEMINI_MODEL` env override) with function calling; tools are the **in-process** endpoint
 functions registered by main.py (`get_nowcast`, `get_route_rain`,
 `get_rain_movement`, `get_accuracy_stats`) — no HTTP self-calls. Multiple
 Gemini keys rotate round-robin (`GEMINI_API_KEY[,2,3…]` or `GEMINI_API_KEYS`
-comma list); Groq llama-3.3-70b is the quota fallback (`GROQ_API_KEY`).
+comma list); Groq `openai/gpt-oss-120b` is the quota fallback (`GROQ_API_KEY`,
+`GROQ_MODEL` override). Provider failures are logged to the `garaj.chatbot` logger.
 Streams SSE: `{"type":"text"|"tool"|"done"|"error"}`. System prompt enforces:
 never judge coverage from a place name — always call get_nowcast and trust
 `in_radar_bounds`.
