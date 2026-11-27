@@ -18,6 +18,7 @@ project (free-tier limits are per-project, not per-key).
 
 import itertools
 import json
+import logging
 import os
 import re
 import threading
@@ -31,8 +32,13 @@ import httpx  # type: ignore
 # Matches GEMINI_API_KEY, GEMINI_API_KEY2, GEMINI_API_KEY_3, etc. (not GEMINI_API_KEYS)
 _KEY_NAME_RE = re.compile(r"^GEMINI_API_KEY(?:_?(\d+))?$")
 
-GEMINI_MODEL = "gemini-2.5-flash"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+log = logging.getLogger("garaj.chatbot")
+
+# gemini-2.5-flash was shut down on 2026-10-16 and Groq's llama-3.3-70b-versatile
+# on 2026-08-16 -- both now 404, which broke Ask AI. Override via env vars so the
+# next retirement is a config change, not a code change.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash").strip()
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip()
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_TOOL_ITERATIONS = 6
 MAX_HISTORY_MESSAGES = 12
@@ -442,6 +448,8 @@ def _run_groq(api_key, messages):
             },
             timeout=60.0,
         )
+        if r.status_code >= 400:
+            log.error("Groq %s failed: HTTP %s %s", GROQ_MODEL, r.status_code, r.text[:500])
         r.raise_for_status()
         msg = r.json()["choices"][0]["message"]
         tool_calls = msg.get("tool_calls")
@@ -453,7 +461,10 @@ def _run_groq(api_key, messages):
             yield _sse({"type": "done"})
             return
 
-        oai_msgs.append(msg)  # assistant turn carrying the tool_calls
+        # assistant turn carrying the tool_calls (drop extra fields such as
+        # "reasoning" that reasoning models return but don't accept back)
+        oai_msgs.append({"role": "assistant", "content": msg.get("content") or "",
+                         "tool_calls": tool_calls})
         for tc in tool_calls:
             name = tc.get("function", {}).get("name", "")
             yield _sse({"type": "tool", "name": name})
@@ -521,6 +532,8 @@ def chat_stream(messages):
                 return  # completed on this key
             except errors.APIError as e:
                 is_429 = getattr(e, "code", None) == 429
+                log.warning("Gemini %s key #%d failed: HTTP %s %s", GEMINI_MODEL, i + 1,
+                            getattr(e, "code", "?"), str(e)[:300])
                 if not is_429:
                     quota_only = False
                     failure_message = f"AI provider request failed (HTTP {getattr(e, 'code', 'unknown')}). Please try again shortly."
@@ -539,6 +552,7 @@ def chat_stream(messages):
                 gemini_exhausted = True
                 break
             except Exception:
+                log.exception("Gemini %s key #%d failed unexpectedly", GEMINI_MODEL, i + 1)
                 quota_only = False
                 if emitted_text:
                     yield _sse({"type": "error", "message": "AI response was interrupted. Please try again."})
@@ -560,6 +574,7 @@ def chat_stream(messages):
             yield from _run_groq(groq_key, messages)
             return
         except Exception:
+            log.exception("Groq fallback (%s) failed", GROQ_MODEL)
             yield _sse({"type": "error", "message": "Fallback AI service is unavailable. Please try again shortly."})
             return
 
